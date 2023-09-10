@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package api.components.v1;
+
+option go_package = "github.com/kanengo/egoist/pkg/api/components/pubsub/v1;pubsub";
+
+message PublishRequest {
+  bytes data = 1;
+  string Pubsub_name = 2;
+  string topic = 3;
+  map<string, string> metadata = 4;
+  string content_type = 5;
+}
+
+message BulkPublishRequest {
+  repeated BulkMessageEntry entries = 1;
+  string pubsub_name = 2;
+  string topic = 3;
+  map<string,string> metadata = 4;
+}
+
+message BulkPublishResponse {
+  repeated BulkPublishResponseFailedEntry failed_entries = 1;
+}
+
+message BulkMessageEntry {
+  string entry_id = 1;
+  bytes event  = 2;
+  string content_type = 3;
+  map<string,string> metadata = 4;
+}
+
+message BulkPublishResponseFailedEntry {
+  string entry_id = 1;
+  string error = 2;
+}
