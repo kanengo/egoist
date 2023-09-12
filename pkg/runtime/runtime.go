@@ -2,14 +2,15 @@ package runtime
 
 import (
 	"context"
+	"sync"
+	"time"
+
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
 	"github.com/kanengo/egoist/pkg/runtime/processor"
 	"github.com/kanengo/goutil/pkg/concurrency"
 	"github.com/kanengo/goutil/pkg/log"
 	"go.uber.org/zap"
-	"sync"
-	"time"
 )
 
 type Runtime struct {
