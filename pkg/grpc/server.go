@@ -27,6 +27,7 @@ type Server interface {
 }
 
 type server struct {
+	api              API
 	config           ServerConfig
 	servers          []*grpc.Server
 	closed           atomic.Bool
@@ -38,8 +39,25 @@ type server struct {
 }
 
 func (s *server) Close() error {
-	//TODO implement me
-	panic("implement me")
+	defer s.wg.Wait()
+	if s.closed.CompareAndSwap(false, true) {
+		close(s.closeCh)
+	}
+	s.wg.Add(len(s.servers))
+	for _, server := range s.servers {
+		go func(server *grpc.Server) {
+			defer s.wg.Done()
+			server.GracefulStop()
+		}(server)
+	}
+
+	if s.api != nil {
+		if err := s.api.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *server) getMiddlewareOptions() []grpc.ServerOption {
@@ -117,12 +135,14 @@ func (s *server) StartNonBlocking() error {
 	return nil
 }
 
-func NewAPIServer() Server {
+func NewAPIServer(api API, config ServerConfig, proxy messaging.Proxy) Server {
 	return &server{
-		config:  ServerConfig{},
+		api:     api,
+		config:  config,
 		servers: nil,
 		closed:  atomic.Bool{},
 		closeCh: nil,
+		proxy:   proxy,
 	}
 }
 

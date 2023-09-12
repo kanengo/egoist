@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package api.v1;
+
+option go_package = "github.com/kanengo/egoist/pkg/api/v1;api";
+
+import "api/v1/pubsub.proto";
+
+service API {
+  rpc PublishEvent (PublishEventRequest) returns (PublishEventResponse);
+}

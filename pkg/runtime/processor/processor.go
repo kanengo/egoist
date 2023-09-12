@@ -2,7 +2,7 @@ package processor
 
 import (
 	"context"
-	apipubsub "github.com/kanengo/egoist/pkg/api/components/pubsub/v1"
+	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
 )
 
@@ -12,8 +12,8 @@ type ComponentManger interface {
 }
 
 type PubsubManager interface {
-	Publish(ctx context.Context, request apipubsub.PublishRequest) error
-	BulkPublish(ctx context.Context, request apipubsub.BulkPublishRequest) (apipubsub.BulkPublishResponse, error)
+	Publish(ctx context.Context, request apiv1.PublishEventRequest) error
+	BulkPublish(ctx context.Context, request apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error)
 }
 
 type Processor struct {

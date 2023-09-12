@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/kanengo/egoist/utils"
@@ -26,6 +28,8 @@ type Config struct {
 	GrpcPort                int
 	ResourcesPath           []string
 	GracefulShutdownSeconds int
+	UnixDomainSocket        string
+	APIListenAddress        string
 }
 
 type internalConfig struct {
@@ -37,18 +41,33 @@ type internalConfig struct {
 	hostAddress              string
 	maxRequestBodySize       int
 	readBufferSize           int
-	unixDomainSocket         int
+	unixDomainSocket         string
+	apiListenAddresses       []string
 
 	resourcesPath []string
 }
 
+func getNamespace() string {
+	return os.Getenv("NAMESPACE")
+}
+
 func (c *Config) toInternalConfig() *internalConfig {
 	intCfg := &internalConfig{
-		namespace:     c.Namespace,
-		id:            c.AppId,
-		appPort:       c.AppPort,
-		grpcPort:      c.GrpcPort,
-		resourcesPath: c.ResourcesPath,
+		namespace:        c.Namespace,
+		id:               c.AppId,
+		appPort:          c.AppPort,
+		grpcPort:         c.GrpcPort,
+		resourcesPath:    c.ResourcesPath,
+		unixDomainSocket: c.UnixDomainSocket,
+	}
+
+	if intCfg.namespace == "" {
+		intCfg.namespace = getNamespace()
+	}
+
+	intCfg.apiListenAddresses = strings.Split(c.APIListenAddress, ",")
+	if len(intCfg.apiListenAddresses) == 0 {
+		intCfg.apiListenAddresses = []string{""}
 	}
 
 	if c.GracefulShutdownSeconds <= 0 {
@@ -71,6 +90,10 @@ func (c *Config) toInternalConfig() *internalConfig {
 	}
 
 	intCfg.hostAddress = hostAddress
+
+	if intCfg.unixDomainSocket == "" {
+		intCfg.unixDomainSocket = intCfg.namespace
+	}
 
 	return intCfg
 }

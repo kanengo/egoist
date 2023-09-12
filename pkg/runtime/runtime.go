@@ -2,6 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/kanengo/egoist/pkg/grpc"
+	"github.com/kanengo/egoist/pkg/messaging"
+	"os"
 	"sync"
 	"time"
 
@@ -18,6 +23,7 @@ type Runtime struct {
 	processor      *processor.Processor
 
 	pendingComponents chan v1alpha1.Component
+	proxy             messaging.Proxy
 
 	runnerCloser *concurrency.RunnerCloserManager
 	wg           sync.WaitGroup
@@ -42,7 +48,7 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 
 			start := time.Now()
 			log.Info("egoist runtime init", zap.String("appId", rt.internalConfig.id))
-			if err := rt.init(ctx); err != nil {
+			if err := rt.initRuntime(ctx); err != nil {
 				return err
 			}
 
@@ -58,8 +64,10 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 	if err := rt.runnerCloser.AddCloser(
 		func() error {
 			log.Info("egoist is shutting down")
+			var errs []error
 			rt.wg.Wait()
-			return nil
+			errs = append(errs, rt.cleanSocket())
+			return errors.Join(errs...)
 		},
 	); err != nil {
 		return nil, err
@@ -68,9 +76,19 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 	return rt, nil
 }
 
-func (rt *Runtime) init(ctx context.Context) error {
+func (rt *Runtime) initRuntime(ctx context.Context) error {
 	if err := rt.loadComponents(ctx); err != nil {
 		return err
+	}
+	api := grpc.NewAPI(grpc.APIOptions{})
+	if err := rt.startGRPCAPIServer(api); err != nil {
+		return fmt.Errorf("faild to start API gRPC server: %w", err)
+	}
+
+	if rt.internalConfig.unixDomainSocket != "" {
+		log.Info("API gRPC server is running on Unix Domain Socket")
+	} else {
+		log.Info("API gRPC server is running", zap.Any("port", rt.internalConfig.appPort))
 	}
 
 	return nil
@@ -78,6 +96,36 @@ func (rt *Runtime) init(ctx context.Context) error {
 
 func (rt *Runtime) Run(ctx context.Context) {
 
+}
+
+func (rt *Runtime) getDefaultGPRCServerConfig() grpc.ServerConfig {
+	return grpc.ServerConfig{
+		AppID:                rt.internalConfig.id,
+		HostAddress:          rt.internalConfig.hostAddress,
+		Port:                 rt.internalConfig.appPort,
+		APIListenAddresses:   rt.internalConfig.apiListenAddresses,
+		NameSpace:            rt.internalConfig.namespace,
+		MaxRequestBodySizeMB: rt.internalConfig.maxRequestBodySize,
+		UnixDomainSocket:     rt.internalConfig.unixDomainSocket,
+		ReadBufferSizeKB:     rt.internalConfig.readBufferSize,
+	}
+}
+
+func (rt *Runtime) startGRPCAPIServer(api grpc.API) error {
+
+	serverConf := rt.getDefaultGPRCServerConfig()
+	serverConf.Port = rt.internalConfig.appPort
+
+	server := grpc.NewAPIServer(api, serverConf, rt.proxy)
+	if err := server.StartNonBlocking(); err != nil {
+		return err
+	}
+
+	if err := rt.runnerCloser.AddCloser(server); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (rt *Runtime) loadComponents(ctx context.Context) error {
@@ -113,4 +161,13 @@ func (rt *Runtime) addPendingComponent(ctx context.Context, comp v1alpha1.Compon
 	case rt.pendingComponents <- comp:
 		return true
 	}
+}
+
+func (rt *Runtime) cleanSocket() error {
+	if rt.internalConfig.unixDomainSocket != "" {
+		err := os.Remove(fmt.Sprintf("%s/egoist-%s-grpc.socket", rt.internalConfig.unixDomainSocket,
+			rt.internalConfig.id))
+		return err
+	}
+	return nil
 }

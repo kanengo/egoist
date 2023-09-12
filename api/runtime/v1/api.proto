@@ -1,9 +1,0 @@
-syntax = "proto3";
-
-package api.runtime.v1;
-
-option go_package = "github.com/kanengo/egoist/pkg/api/runtime/v1;runtime";
-
-service API {
-
-}
