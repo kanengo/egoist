@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/messaging"
 	"github.com/kanengo/goutil/pkg/log"
 	"go.uber.org/zap"
@@ -18,7 +19,8 @@ import (
 )
 
 const (
-	GrpcServerKindApi = "apiserver"
+	renewWhenPercentagePassed = 70
+	GrpcServerKindApi         = "apiserver"
 )
 
 type Server interface {
@@ -81,7 +83,7 @@ func (s *server) getGRPCServer() (*grpc.Server, error) {
 	}
 
 	if s.proxy != nil {
-
+		opts = append(opts, grpc.UnknownServiceHandler(s.proxy.Handler()))
 	}
 
 	return grpc.NewServer(opts...), nil
@@ -93,6 +95,8 @@ func (s *server) StartNonBlocking() error {
 		socket := fmt.Sprintf("%s/egoist-%s-grpc.socket", s.config.UnixDomainSocket, s.config.AppID)
 		l, err := net.Listen("unix", socket)
 		if err != nil {
+			log.Error("Failed to listen gRPC server on Unix", zap.String("socket", socket),
+				zap.Error(err))
 			return err
 		}
 		log.Info("gRpc server listening on UNIX socket", zap.String("socket", socket))
@@ -116,20 +120,25 @@ func (s *server) StartNonBlocking() error {
 	}
 
 	for _, listener := range listeners {
-		server, err := s.getGRPCServer()
+		svr, err := s.getGRPCServer()
 		if err != nil {
 			return err
 		}
-		s.servers = append(s.servers, server)
+		s.servers = append(s.servers, svr)
 
 		//RegisterService
+		switch s.kind {
+		case GrpcServerKindApi:
+			apiv1.RegisterAPIServer(svr, s.api)
+		}
+
 		s.wg.Add(1)
 		go func(server *grpc.Server, l net.Listener) {
 			defer s.wg.Done()
 			if err := server.Serve(l); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 				log.Fatal("gRPC server error", zap.Error(err))
 			}
-		}(server, listener)
+		}(svr, listener)
 	}
 
 	return nil
@@ -137,12 +146,15 @@ func (s *server) StartNonBlocking() error {
 
 func NewAPIServer(api API, config ServerConfig, proxy messaging.Proxy) Server {
 	return &server{
-		api:     api,
-		config:  config,
-		servers: nil,
-		closed:  atomic.Bool{},
-		closeCh: nil,
-		proxy:   proxy,
+		api:              api,
+		config:           config,
+		servers:          nil,
+		closed:           atomic.Bool{},
+		closeCh:          nil,
+		kind:             GrpcServerKindApi,
+		maxConnectionAge: nil,
+		wg:               sync.WaitGroup{},
+		proxy:            proxy,
 	}
 }
 
@@ -153,4 +165,13 @@ func NewInternalServer() Server {
 		closed:  atomic.Bool{},
 		closeCh: nil,
 	}
+}
+
+func shouldRenewCert(certExpiryDate time.Time, certDuration time.Duration) bool {
+	expiresIn := certExpiryDate.Sub(time.Now())
+	expiresInSeconds := expiresIn.Seconds()
+	certDurationSeconds := certDuration.Seconds()
+
+	percentagePassed := 100 - ((expiresInSeconds / certDurationSeconds) * 100)
+	return percentagePassed >= renewWhenPercentagePassed
 }
