@@ -24,3 +24,8 @@ func New(options Options) *Processor {
 	processor := &Processor{}
 	return processor
 }
+
+func (p *Processor) UpdateComponent(comp v1alpha1.Component) error {
+
+	return nil
+}

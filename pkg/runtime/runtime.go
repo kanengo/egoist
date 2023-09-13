@@ -80,6 +80,7 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 	if err := rt.loadComponents(ctx); err != nil {
 		return err
 	}
+
 	api := grpc.NewAPI(grpc.APIOptions{})
 	if err := rt.startGRPCAPIServer(api); err != nil {
 		return fmt.Errorf("faild to start API gRPC server: %w", err)
@@ -148,6 +149,9 @@ func (rt *Runtime) processComponents(ctx context.Context) error {
 	for comp := range rt.pendingComponents {
 		if comp.Name == "" {
 			continue
+		}
+		if err := rt.processor.UpdateComponent(comp); err != nil {
+			log.Error("failed to update component", zap.Any("comp", comp))
 		}
 	}
 
