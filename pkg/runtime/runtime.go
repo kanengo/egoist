@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/kanengo/egoist/pkg/grpc"
-	"github.com/kanengo/egoist/pkg/messaging"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/kanengo/egoist/pkg/grpc"
+	"github.com/kanengo/egoist/pkg/messaging"
 
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
@@ -95,8 +96,13 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 	return nil
 }
 
-func (rt *Runtime) Run(ctx context.Context) {
+func (rt *Runtime) Run(ctx context.Context) error {
+	if err := rt.runnerCloser.Run(ctx); err != nil {
+		log.Info("failed to run runtime", zap.Error(err))
+		return err
+	}
 
+	return nil
 }
 
 func (rt *Runtime) getDefaultGPRCServerConfig() grpc.ServerConfig {
@@ -150,7 +156,7 @@ func (rt *Runtime) processComponents(ctx context.Context) error {
 		if comp.Name == "" {
 			continue
 		}
-		if err := rt.processor.UpdateComponent(comp); err != nil {
+		if err := rt.processor.InitComponent(ctx, comp); err != nil {
 			log.Error("failed to update component", zap.Any("comp", comp))
 		}
 	}

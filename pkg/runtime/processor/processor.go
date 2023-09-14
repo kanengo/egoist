@@ -2,11 +2,16 @@ package processor
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/kanengo/egoist/components_contrib"
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
 )
 
-type ComponentManger interface {
+type componentManger interface {
 	Init(ctx context.Context, component v1alpha1.Component) error
 	Close(component v1alpha1.Component) error
 }
@@ -17,15 +22,45 @@ type PubsubManager interface {
 }
 
 type Processor struct {
-	pubsub PubsubManager
+	pubsub       PubsubManager
+	compManagers map[string]componentManger
 }
 
 func New(options Options) *Processor {
-	processor := &Processor{}
-	return processor
+	p := &Processor{
+		compManagers: make(map[string]componentManger),
+	}
+
+	p.compManagers[components_contrib.TypePubsub] = &pubSubManager{}
+
+	return p
 }
 
-func (p *Processor) UpdateComponent(comp v1alpha1.Component) error {
+func parseComponentType(comp v1alpha1.Component) (string, error) {
+	typ := comp.Spec.Type
+	if typ == "" {
+		return "", errors.New("component type must have value")
+	}
+
+	ct := strings.Split(typ, ".")[0]
+
+	return ct, nil
+}
+
+func (p *Processor) InitComponent(ctx context.Context, comp v1alpha1.Component) error {
+	compTyp, err := parseComponentType(comp)
+	if err != nil {
+		return err
+	}
+
+	mgr, ok := p.compManagers[compTyp]
+	if !ok {
+		return fmt.Errorf("not support this component type:%s", compTyp)
+	}
+
+	if err := mgr.Init(ctx, comp); err != nil {
+		return err
+	}
 
 	return nil
 }
