@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"os"
+	"os/user"
+	"path"
 	"strings"
 	"time"
 
@@ -19,6 +21,9 @@ const (
 	DefaultAPIListenAddress = ""
 	// DefaultReadBufferSize is the default option for the maximum header size in KB for Dapr HTTP servers.
 	DefaultReadBufferSize = 4
+
+	DefaultRuntimeAppPort  = 50001
+	DefaultRuntimeGrpcPort = 50017
 )
 
 type Config struct {
@@ -26,7 +31,7 @@ type Config struct {
 	AppId                   string
 	AppPort                 int
 	GrpcPort                int
-	ResourcesPath           []string
+	ResourcesPath           string
 	GracefulShutdownSeconds int
 	UnixDomainSocket        string
 	APIListenAddress        string
@@ -57,7 +62,6 @@ func (c *Config) toInternalConfig() *internalConfig {
 		id:               c.AppId,
 		appPort:          c.AppPort,
 		grpcPort:         c.GrpcPort,
-		resourcesPath:    c.ResourcesPath,
 		unixDomainSocket: c.UnixDomainSocket,
 	}
 
@@ -94,6 +98,26 @@ func (c *Config) toInternalConfig() *internalConfig {
 	if intCfg.unixDomainSocket == "" {
 		intCfg.unixDomainSocket = intCfg.namespace
 	}
+
+	if intCfg.appPort == 0 {
+		intCfg.appPort = DefaultRuntimeAppPort
+	}
+
+	if intCfg.grpcPort == 0 {
+		intCfg.grpcPort = DefaultRuntimeGrpcPort
+	}
+
+	if c.ResourcesPath == "" {
+		u, err := user.Current()
+		if err != nil {
+			log.Fatal("failed to init config when get current user", zap.Error(err))
+		}
+		intCfg.resourcesPath = []string{path.Join(u.HomeDir, "components")}
+	} else {
+		intCfg.resourcesPath = strings.Split(c.ResourcesPath, ",")
+	}
+
+	log.Debug("init internal config success", zap.Any("config", intCfg))
 
 	return intCfg
 }

@@ -1,6 +1,7 @@
 package processor
 
 type Options struct {
-	ID        string
-	NameSpace string
+	ID        string `json:"id"`
+	NameSpace string `json:"nameSpace"`
+	PodName   string `json:"podName"`
 }

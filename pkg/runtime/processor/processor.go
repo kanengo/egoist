@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	compPubsub "github.com/kanengo/egoist/pkg/components/pubsub"
+	"github.com/kanengo/egoist/pkg/runtime/processor/pubsub"
 	"strings"
 
 	"github.com/kanengo/egoist/components_contrib"
@@ -31,7 +33,14 @@ func New(options Options) *Processor {
 		compManagers: make(map[string]componentManger),
 	}
 
-	p.compManagers[components_contrib.TypePubsub] = &pubSubManager{}
+	p.compManagers[components_contrib.TypePubsub] = pubsub.New(pubsub.Options{
+		ID:            options.ID,
+		Namespace:     options.NameSpace,
+		PodName:       options.PodName,
+		ResourcesPath: nil,
+		Registry:      compPubsub.DefaultRegistry,
+		Meta:          nil,
+	})
 
 	return p
 }
