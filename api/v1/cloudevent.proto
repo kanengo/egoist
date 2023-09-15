@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/kanengo/egoist/pkg/api/v1;api";
+option csharp_namespace = "Egoist.Client.Autogen.Grpc.v1";
+
+message CloudEvent {
+  string id = 1;
+  bytes data = 2;
+  string source = 3;
+  string spec_version = 4;
+  string type = 5;
+  string data_content_type = 6;
+  int64 timestamp = 7;
+  map<string, google.protobuf.Value> extensions = 9;
+}

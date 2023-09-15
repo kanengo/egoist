@@ -9,7 +9,7 @@ type CompStore[T any] struct {
 
 func (c *CompStore[T]) Get(name string) (T, bool) {
 	c.rw.RLock()
-	defer c.rw.Unlock()
+	defer c.rw.RUnlock()
 
 	val, ok := c.comps[name]
 
@@ -20,4 +20,10 @@ func (c *CompStore[T]) Set(name string, val T) {
 	c.rw.Lock()
 	defer c.rw.Unlock()
 	c.comps[name] = val
+}
+
+func (c *CompStore[T]) Del(name string) {
+	c.rw.Lock()
+	defer c.rw.Unlock()
+	delete(c.comps, name)
 }

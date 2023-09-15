@@ -2,6 +2,8 @@ package pubsub
 
 import (
 	"context"
+	"sync"
+
 	contribPubsub "github.com/kanengo/egoist/components_contrib/pubsub"
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
@@ -25,15 +27,22 @@ type Options struct {
 	//OperatorClient operatorv1.OperatorClient
 }
 
+type pubsubCompItem struct {
+	Component contribPubsub.PubSub
+	Resource  v1alpha1.Component
+}
+
 type pubSubManager struct {
-	compStore components.CompStore[contribPubsub.PubSub]
+	compStore components.CompStore[pubsubCompItem]
 	meta      *meta.Meta
 	registry  *pubsub.Registry
+
+	lock sync.RWMutex
 }
 
 func New(opts Options) *pubSubManager {
 	ps := &pubSubManager{
-		compStore: components.CompStore[contribPubsub.PubSub]{},
+		compStore: components.CompStore[pubsubCompItem]{},
 		meta:      opts.Meta,
 		registry:  opts.Registry,
 	}
@@ -41,14 +50,14 @@ func New(opts Options) *pubSubManager {
 	return ps
 }
 
-func (p *pubSubManager) Init(ctx context.Context, component v1alpha1.Component) error {
-	spec := component.Spec
-	ps, err := p.registry.Create(spec.Type, component.ResourceVersion)
+func (p *pubSubManager) Init(ctx context.Context, comp v1alpha1.Component) error {
+	spec := comp.Spec
+	ps, err := p.registry.Create(spec.Type, comp.ResourceVersion)
 	if err != nil {
 		return err
 	}
 
-	metaBase, err := p.meta.ToBaseMetadata(component)
+	metaBase, err := p.meta.ToBaseMetadata(comp)
 	if err != nil {
 		return err
 	}
@@ -58,12 +67,37 @@ func (p *pubSubManager) Init(ctx context.Context, component v1alpha1.Component) 
 		return err
 	}
 
-	p.compStore.Set(component.Name, ps)
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	old, ok := p.compStore.Get(comp.Name)
+	if ok && old.Component != nil {
+		defer func() {
+			_ = old.Component.Close()
+		}()
+	}
+
+	p.compStore.Set(comp.Name, pubsubCompItem{
+		Component: ps,
+		Resource:  comp,
+	})
 
 	return nil
 }
 
-func (p *pubSubManager) Close(component v1alpha1.Component) error {
-	//TODO implement me
-	panic("implement me")
+func (p *pubSubManager) Close(comp v1alpha1.Component) error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	ps, ok := p.compStore.Get(comp.Name)
+	if !ok {
+		return nil
+	}
+
+	if err := ps.Component.Close(); err != nil {
+		return err
+	}
+
+	p.compStore.Del(comp.Name)
+
+	return nil
 }

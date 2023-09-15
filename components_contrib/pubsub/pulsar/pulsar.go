@@ -28,6 +28,10 @@ import (
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/apache/pulsar-client-go/pulsar/crypto"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/kanengo/egoist/components_contrib/metadata"
+	"github.com/kanengo/egoist/components_contrib/pubsub"
+	"github.com/kanengo/goutil/pkg/log"
+	"go.uber.org/zap"
 )
 
 const (
@@ -88,7 +92,6 @@ const (
 type ProcessMode string
 
 type Pulsar struct {
-	logger   logger.Logger
 	client   pulsar.Client
 	metadata pulsarMetadata
 	cache    *lru.Cache[string, pulsar.Producer]
@@ -97,9 +100,8 @@ type Pulsar struct {
 	wg       sync.WaitGroup
 }
 
-func NewPulsar(l logger.Logger) pubsub.PubSub {
+func NewPulsar() pubsub.PubSub {
 	return &Pulsar{
-		logger:  l,
 		closeCh: make(chan struct{}),
 	}
 }
@@ -171,22 +173,22 @@ func (p *Pulsar) Init(ctx context.Context, metadata pubsub.Metadata) error {
 	switch {
 	case len(m.Token) > 0:
 		options.Authentication = pulsar.NewAuthenticationToken(m.Token)
-	case len(m.ClientCredentialsMetadata.TokenURL) > 0:
-		var cc *oauth2.ClientCredentials
-		cc, err = oauth2.NewClientCredentials(ctx, oauth2.ClientCredentialsOptions{
-			Logger:       p.logger,
-			TokenURL:     m.ClientCredentialsMetadata.TokenURL,
-			CAPEM:        []byte(m.ClientCredentialsMetadata.TokenCAPEM),
-			ClientID:     m.ClientCredentialsMetadata.ClientID,
-			ClientSecret: m.ClientCredentialsMetadata.ClientSecret,
-			Scopes:       m.ClientCredentialsMetadata.Scopes,
-			Audiences:    m.ClientCredentialsMetadata.Audiences,
-		})
-		if err != nil {
-			return fmt.Errorf("could not instantiate oauth2 token provider: %w", err)
-		}
-
-		options.Authentication = pulsar.NewAuthenticationTokenFromSupplier(cc.Token)
+		//case len(m.ClientCredentialsMetadata.TokenURL) > 0:
+		//	var cc *oauth2.ClientCredentials
+		//	cc, err = oauth2.NewClientCredentials(ctx, oauth2.ClientCredentialsOptions{
+		//		Logger:       p.logger,
+		//		TokenURL:     m.ClientCredentialsMetadata.TokenURL,
+		//		CAPEM:        []byte(m.ClientCredentialsMetadata.TokenCAPEM),
+		//		ClientID:     m.ClientCredentialsMetadata.ClientID,
+		//		ClientSecret: m.ClientCredentialsMetadata.ClientSecret,
+		//		Scopes:       m.ClientCredentialsMetadata.Scopes,
+		//		Audiences:    m.ClientCredentialsMetadata.Audiences,
+		//	})
+		//	if err != nil {
+		//		return fmt.Errorf("could not instantiate oauth2 token provider: %w", err)
+		//	}
+		//
+		//	options.Authentication = pulsar.NewAuthenticationTokenFromSupplier(cc.Token)
 	}
 
 	client, err := pulsar.NewClient(options)
@@ -236,7 +238,7 @@ func (p *Pulsar) Publish(ctx context.Context, req *pubsub.PublishRequest) error 
 	sm, hasSchema := p.metadata.internalTopicSchemas[req.Topic]
 
 	if !ok || producer == nil {
-		p.logger.Debugf("creating producer for topic %s, full topic name in pulsar is %s", req.Topic, topic)
+		log.Debug("creating producer for topic", zap.String("topic", req.Topic), zap.String("fullTopic", topic))
 		opts := pulsar.ProducerOptions{
 			Topic:                   topic,
 			DisableBatching:         p.metadata.DisableBatching,
@@ -308,20 +310,6 @@ func parsePublishMetadata(req *pubsub.PublishRequest, schema schemaMetadata) (
 	case jsonProtocol:
 		var obj interface{}
 		err = json.Unmarshal(req.Data, &obj)
-
-		if err != nil {
-			return nil, err
-		}
-
-		msg.Value = obj
-	case avroProtocol:
-		var obj interface{}
-		avroSchema, parseErr := avro.Parse(schema.value)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-
-		err = avro.Unmarshal(avroSchema, req.Data, &obj)
 
 		if err != nil {
 			return nil, err
@@ -415,7 +403,7 @@ func (p *Pulsar) Subscribe(ctx context.Context, req pubsub.SubscribeRequest, han
 	}
 	consumer, err := p.client.Subscribe(options)
 	if err != nil {
-		p.logger.Debugf("Could not subscribe to %s, full topic name in pulsar is %s", req.Topic, topic)
+		log.Debug("Could not subscribe", zap.String("topic", req.Topic), zap.String("fullTopic", topic))
 		return err
 	}
 
@@ -449,7 +437,8 @@ func (p *Pulsar) listenMessage(ctx context.Context, req pubsub.SubscribeRequest,
 			if strings.ToLower(req.Metadata[processModeKey]) == processModeSync { //nolint:gocritic
 				err = p.handleMessage(ctx, originTopic, msg, handler)
 				if err != nil && !errors.Is(err, context.Canceled) {
-					p.logger.Errorf("Error sync processing message: %s/%#v [key=%s]: %v", msg.Topic(), msg.ID(), msg.Key(), err)
+					log.Error("Error sync processing message", zap.String("topic", msg.Topic()), zap.Any("id", msg.ID()),
+						zap.String("key", msg.Key()), zap.Error(err))
 				}
 			} else { // async process mode by default
 				// Go routine to handle multiple messages at once.
@@ -458,13 +447,14 @@ func (p *Pulsar) listenMessage(ctx context.Context, req pubsub.SubscribeRequest,
 					defer p.wg.Done()
 					err = p.handleMessage(ctx, originTopic, msg, handler)
 					if err != nil && !errors.Is(err, context.Canceled) {
-						p.logger.Errorf("Error async processing message: %s/%#v [key=%s]: %v", msg.Topic(), msg.ID(), msg.Key(), err)
+						log.Error("Error async processing message", zap.String("topic", msg.Topic()), zap.Any("id", msg.ID()),
+							zap.String("key", msg.Key()), zap.Error(err))
 					}
 				}(msg)
 			}
 
 		case <-ctx.Done():
-			p.logger.Errorf("Subscription context done. Closing consumer. Err: %s", ctx.Err())
+			log.Error("Subscription context done. Closing consumer", zap.Error(ctx.Err()))
 			return
 		}
 	}
@@ -477,14 +467,14 @@ func (p *Pulsar) handleMessage(ctx context.Context, originTopic string, msg puls
 		Metadata: msg.Properties(),
 	}
 
-	p.logger.Debugf("Processing Pulsar message %s/%#v", msg.Topic(), msg.ID())
+	log.Debug("Processing Pulsar message", zap.String("topic", msg.Topic()), zap.String("id", msg.ID().String()))
 	err := handler(ctx, &pubsubMsg)
 	if err != nil {
 		msg.Nack(msg.Message)
 		return err
 	}
 
-	msg.Ack(msg.Message)
+	_ = msg.Ack(msg.Message)
 	return nil
 }
 
@@ -497,7 +487,7 @@ func (p *Pulsar) Close() error {
 	for _, k := range p.cache.Keys() {
 		producer, _ := p.cache.Peek(k)
 		if producer != nil {
-			p.logger.Debugf("closing producer for topic %s", k)
+			log.Debug("closing producer", zap.String("topic", k))
 			producer.Close()
 		}
 	}
@@ -522,7 +512,7 @@ func (p *Pulsar) formatTopic(topic string) string {
 // GetComponentMetadata returns the metadata of the component.
 func (p *Pulsar) GetComponentMetadata() (metadataInfo metadata.MetadataMap) {
 	metadataStruct := pulsarMetadata{}
-	metadata.GetMetadataInfoFromStructType(reflect.TypeOf(metadataStruct), &metadataInfo, metadata.PubSubType)
+	_ = metadata.GetMetadataInfoFromStructType(reflect.TypeOf(metadataStruct), &metadataInfo, metadata.PubSubType)
 	return
 }
 

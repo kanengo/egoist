@@ -3,6 +3,7 @@ syntax = "proto3";
 package api.v1;
 
 option go_package = "github.com/kanengo/egoist/pkg/api/v1;api";
+option csharp_namespace = "Egoist.Client.Autogen.Grpc.v1";
 
 message PublishEventRequest {
   bytes data = 1;
