@@ -7,7 +7,7 @@ option csharp_namespace = "Egoist.Client.Autogen.Grpc.v1";
 
 message PublishEventRequest {
   bytes data = 1;
-  string Pubsub_name = 2;
+  string pubsub_name = 2;
   string topic = 3;
   map<string, string> metadata = 4;
   string content_type = 5;
