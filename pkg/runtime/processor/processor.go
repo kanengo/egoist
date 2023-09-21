@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	compPubsub "github.com/kanengo/egoist/pkg/components/pubsub"
-	"github.com/kanengo/egoist/pkg/runtime/processor/pubsub"
 	"strings"
+
+	compPubsub "github.com/kanengo/egoist/pkg/components/pubsub"
+	"github.com/kanengo/egoist/pkg/runtime/meta"
+	"github.com/kanengo/egoist/pkg/runtime/processor/pubsub"
 
 	"github.com/kanengo/egoist/components_contrib"
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
@@ -19,8 +21,8 @@ type componentManger interface {
 }
 
 type PubsubManager interface {
-	Publish(ctx context.Context, request apiv1.PublishEventRequest) error
-	BulkPublish(ctx context.Context, request apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error)
+	Publish(ctx context.Context, request *apiv1.PublishEventRequest) (*apiv1.PublishEventResponse, error)
+	BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error)
 }
 
 type Processor struct {
@@ -33,13 +35,13 @@ func New(options Options) *Processor {
 		compManagers: make(map[string]componentManger),
 	}
 
-	p.compManagers[components_contrib.TypePubsub] = pubsub.New(pubsub.Options{
+	p.compManagers[components_contrib.TypePubsub] = pubsub.NewManager(pubsub.Options{
 		ID:            options.ID,
 		Namespace:     options.NameSpace,
 		PodName:       options.PodName,
 		ResourcesPath: nil,
 		Registry:      compPubsub.DefaultRegistry,
-		Meta:          nil,
+		Meta:          &meta.Meta{},
 	})
 
 	return p

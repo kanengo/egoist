@@ -7,6 +7,14 @@ type CompStore[T any] struct {
 	rw    sync.RWMutex
 }
 
+func NewCompStore[T any]() *CompStore[T] {
+	cs := &CompStore[T]{
+		comps: make(map[string]T),
+	}
+
+	return cs
+}
+
 func (c *CompStore[T]) Get(name string) (T, bool) {
 	c.rw.RLock()
 	defer c.rw.RUnlock()

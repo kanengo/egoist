@@ -2,11 +2,12 @@ package meta
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/kanengo/egoist/components_contrib/metadata"
 	"github.com/kanengo/egoist/pkg/resources/common"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
-	"strings"
 )
 
 type Meta struct {

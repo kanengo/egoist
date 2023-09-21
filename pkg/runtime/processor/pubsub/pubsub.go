@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	contribPubsub "github.com/kanengo/egoist/components_contrib/pubsub"
+	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
 
@@ -33,21 +34,33 @@ type pubsubCompItem struct {
 }
 
 type pubSubManager struct {
-	compStore components.CompStore[pubsubCompItem]
+	//opts      Options
+	compStore *components.CompStore[pubsubCompItem]
 	meta      *meta.Meta
 	registry  *pubsub.Registry
 
 	lock sync.RWMutex
 }
 
-func New(opts Options) *pubSubManager {
-	ps := &pubSubManager{
-		compStore: components.CompStore[pubsubCompItem]{},
+func NewManager(opts Options) *pubSubManager {
+	pm := &pubSubManager{
+		//opts:      opts,
+		compStore: components.NewCompStore[pubsubCompItem](),
 		meta:      opts.Meta,
-		registry:  opts.Registry,
+		registry:  pubsub.DefaultRegistry,
 	}
 
-	return ps
+	return pm
+}
+
+func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEventRequest) (*apiv1.PublishEventResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p *pubSubManager) BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (p *pubSubManager) Init(ctx context.Context, comp v1alpha1.Component) error {
