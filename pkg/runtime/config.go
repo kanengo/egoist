@@ -96,7 +96,11 @@ func (c *Config) toInternalConfig() *internalConfig {
 	intCfg.hostAddress = hostAddress
 
 	if intCfg.unixDomainSocket == "" {
-		intCfg.unixDomainSocket = intCfg.namespace
+		u, err := user.Current()
+		if err != nil {
+			log.Fatal("failed to init config when get current user", zap.Error(err))
+		}
+		intCfg.unixDomainSocket = path.Join(u.HomeDir, ".egoist", intCfg.unixDomainSocket)
 	}
 
 	if intCfg.appPort == 0 {
@@ -112,12 +116,12 @@ func (c *Config) toInternalConfig() *internalConfig {
 		if err != nil {
 			log.Fatal("failed to init config when get current user", zap.Error(err))
 		}
-		intCfg.resourcesPath = []string{path.Join(u.HomeDir, "components")}
+		intCfg.resourcesPath = []string{path.Join(u.HomeDir, ".egoist/components")}
 	} else {
 		intCfg.resourcesPath = strings.Split(c.ResourcesPath, ",")
 	}
 
-	log.Debug("init internal config success", zap.Any("config", intCfg))
+	log.Debug("init internal config success", zap.String("appId", intCfg.id), zap.String("namespace", intCfg.namespace))
 
 	return intCfg
 }

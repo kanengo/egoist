@@ -45,6 +45,8 @@ func (s *server) Close() error {
 	if s.closed.CompareAndSwap(false, true) {
 		close(s.closeCh)
 	}
+	log.Debug("gRPC server starting to close", zap.String("kind", s.kind))
+
 	s.wg.Add(len(s.servers))
 	for _, server := range s.servers {
 		go func(server *grpc.Server) {
@@ -58,7 +60,7 @@ func (s *server) Close() error {
 			return err
 		}
 	}
-
+	//log.Debug("gRPC server close success", zap.String("kind", s.kind))
 	return nil
 }
 
@@ -150,7 +152,7 @@ func NewAPIServer(api API, config ServerConfig, proxy messaging.Proxy) Server {
 		config:           config,
 		servers:          nil,
 		closed:           atomic.Bool{},
-		closeCh:          nil,
+		closeCh:          make(chan struct{}),
 		kind:             GrpcServerKindApi,
 		maxConnectionAge: nil,
 		wg:               sync.WaitGroup{},
@@ -163,7 +165,7 @@ func NewInternalServer() Server {
 		config:  ServerConfig{},
 		servers: nil,
 		closed:  atomic.Bool{},
-		closeCh: nil,
+		closeCh: make(chan struct{}),
 	}
 }
 

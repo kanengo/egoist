@@ -28,6 +28,8 @@ type Runtime struct {
 
 	runnerCloser *concurrency.RunnerCloserManager
 	wg           sync.WaitGroup
+
+	api grpc.API
 }
 
 func newRuntime(intCfg *internalConfig) (*Runtime, error) {
@@ -79,7 +81,7 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 
 func (rt *Runtime) initRuntime(ctx context.Context) error {
 	if err := rt.loadComponents(ctx); err != nil {
-		return err
+		//return err
 	}
 
 	api := grpc.NewAPI(grpc.APIOptions{})
@@ -87,10 +89,12 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 		return fmt.Errorf("faild to start API gRPC server: %w", err)
 	}
 
+	rt.api = api
+
 	if rt.internalConfig.unixDomainSocket != "" {
 		log.Info("API gRPC server is running on Unix Domain Socket")
 	} else {
-		log.Info("API gRPC server is running", zap.Any("port", rt.internalConfig.appPort))
+		log.Info("API gRPC server is running", zap.Any("port", rt.internalConfig.grpcPort))
 	}
 
 	return nil
@@ -98,7 +102,7 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 
 func (rt *Runtime) Run(ctx context.Context) error {
 	if err := rt.runnerCloser.Run(ctx); err != nil {
-		log.Info("failed to run runtime", zap.Error(err))
+		log.Error("failed to run runtime", zap.Error(err))
 		return err
 	}
 
@@ -121,14 +125,14 @@ func (rt *Runtime) getDefaultGPRCServerConfig() grpc.ServerConfig {
 func (rt *Runtime) startGRPCAPIServer(api grpc.API) error {
 
 	serverConf := rt.getDefaultGPRCServerConfig()
-	serverConf.Port = rt.internalConfig.appPort
+	serverConf.Port = rt.internalConfig.grpcPort
 
 	server := grpc.NewAPIServer(api, serverConf, rt.proxy)
 	if err := server.StartNonBlocking(); err != nil {
 		return err
 	}
-
 	if err := rt.runnerCloser.AddCloser(server); err != nil {
+		log.Error("start gRPC API server failed to add closer", zap.Error(err))
 		return err
 	}
 
@@ -141,6 +145,7 @@ func (rt *Runtime) loadComponents(ctx context.Context) error {
 
 	comps, err := loader.LoadComponents()
 	if err != nil {
+		log.Error("failed to loadComponents", zap.Error(err), zap.Strings("resourcePath", rt.internalConfig.resourcesPath))
 		return err
 	}
 
@@ -152,6 +157,7 @@ func (rt *Runtime) loadComponents(ctx context.Context) error {
 }
 
 func (rt *Runtime) processComponents(ctx context.Context) error {
+	log.Info("start to process components")
 	for comp := range rt.pendingComponents {
 		if comp.Name == "" {
 			continue
@@ -175,9 +181,9 @@ func (rt *Runtime) addPendingComponent(ctx context.Context, comp v1alpha1.Compon
 
 func (rt *Runtime) cleanSocket() error {
 	if rt.internalConfig.unixDomainSocket != "" {
-		err := os.Remove(fmt.Sprintf("%s/egoist-%s-grpc.socket", rt.internalConfig.unixDomainSocket,
+		_ = os.Remove(fmt.Sprintf("%s/egoist-%s-grpc.socket", rt.internalConfig.unixDomainSocket,
 			rt.internalConfig.id))
-		return err
+		//return err
 	}
 	return nil
 }

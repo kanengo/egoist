@@ -2,12 +2,14 @@ package pubsub
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	contribPubsub "github.com/kanengo/egoist/components_contrib/pubsub"
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/kanengo/egoist/pkg/components/pubsub"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
@@ -54,8 +56,37 @@ func NewManager(opts Options) *pubSubManager {
 }
 
 func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEventRequest) (*apiv1.PublishEventResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	ps, ok := p.compStore.Get(request.PubsubName)
+	if !ok {
+		return nil, fmt.Errorf("no %s pubusb component fonund", request.PubsubName)
+	}
+
+	cloudEventType := ""
+	cloudEventSource := ""
+
+	cloudEvent := &apiv1.CloudEvent{
+		Id:              "",
+		Data:            request.Data,
+		Source:          cloudEventSource,
+		SpecVersion:     "1.0",
+		Type:            cloudEventType,
+		DataContentType: "application/protobuf",
+		Timestamp:       0,
+		Extensions:      nil,
+	}
+
+	data, _ := proto.Marshal(cloudEvent)
+	publishRequest := &contribPubsub.PublishRequest{
+		Data:       data,
+		PubsubName: request.PubsubName,
+		Topic:      request.Topic,
+		Metadata:   request.Metadata,
+	}
+	if err := ps.Component.Publish(ctx, publishRequest); err != nil {
+		return nil, err
+	}
+
+	return &apiv1.PublishEventResponse{}, nil
 }
 
 func (p *pubSubManager) BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error) {
