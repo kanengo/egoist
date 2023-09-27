@@ -39,3 +39,9 @@ message BulkPublishResponseFailedEntry {
   string entry_id = 1;
   string error = 2;
 }
+
+message SubscribeRequest {
+
+}
+
+message SubscribeResponse {}

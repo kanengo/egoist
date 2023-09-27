@@ -4,16 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/kanengo/egoist/utils"
 	"github.com/kanengo/goutil/pkg/log"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/validation/path"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-	"path/filepath"
 	"sigs.k8s.io/yaml"
-	"strings"
 )
 
 type kubernetesManifest interface {
@@ -38,6 +38,7 @@ func NewLocalResourcesLoader[T kubernetesManifest](paths ...string) *LocalResour
 
 func (lr *LocalResourcesLoader[T]) Load() ([]T, error) {
 	var resources []T
+	log.Debug("LocalResourcesLoader", zap.Strings("paths", lr.paths))
 	for _, p := range lr.paths {
 		loaded, err := lr.loadFromPath(p)
 		if err != nil {
@@ -62,22 +63,22 @@ func (lr *LocalResourcesLoader[T]) loadFromPath(path string) ([]T, error) {
 		if file.IsDir() {
 			continue
 		}
-
 		fileName := file.Name()
+		log.Debug("LocalResourcesLoader file", zap.String("name", fileName))
 		if !utils.IsYaml(fileName) {
 			log.Warn("A non-YAML file was detected, it will not be loaded", zap.String("fileName", fileName),
 				zap.String("kind", lr.kind))
 			continue
 		}
 
-		lr.loadFromFile(filepath.Join(path, fileName))
+		comps = append(comps, lr.loadFromFile(filepath.Join(path, fileName))...)
 	}
 
 	return comps, nil
 }
 
-func (lr *LocalResourcesLoader[T]) loadFromFile(path string) []v1alpha1.Component {
-	var comps []v1alpha1.Component
+func (lr *LocalResourcesLoader[T]) loadFromFile(path string) []T {
+	var comps []T
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -98,8 +99,8 @@ type typeInfo struct {
 }
 
 // decodeYaml decodes the yaml document.
-func (lr *LocalResourcesLoader[T]) decodeYaml(b []byte) ([]v1alpha1.Component, []error) {
-	list := make([]v1alpha1.Component, 0)
+func (lr *LocalResourcesLoader[T]) decodeYaml(b []byte) ([]T, []error) {
+	list := make([]T, 0)
 	var errors []error
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	scanner.Split(splitYamlDoc)
@@ -131,7 +132,7 @@ func (lr *LocalResourcesLoader[T]) decodeYaml(b []byte) ([]v1alpha1.Component, [
 			continue
 		}
 
-		var manifest v1alpha1.Component
+		var manifest T
 		//if lr.zvFn != nil {
 		//	manifest = lr.zvFn()
 		//}

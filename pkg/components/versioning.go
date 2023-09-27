@@ -15,4 +15,14 @@ const (
 
 	// First stable version (v1).
 	FirstStableVersion = "v1"
+
+	CloudEventMetadataType   = "cloudevent.type"
+	CloudEventMetadataSource = "cloudevent.source"
+)
+
+var (
+	CloudEventMetadataKeys = map[string]struct{}{
+		CloudEventMetadataType:   {},
+		CloudEventMetadataSource: {},
+	}
 )

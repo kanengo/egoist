@@ -68,6 +68,7 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 		func() error {
 			log.Info("egoist is shutting down")
 			var errs []error
+
 			rt.wg.Wait()
 			errs = append(errs, rt.cleanSocket())
 			return errors.Join(errs...)
@@ -81,7 +82,7 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 
 func (rt *Runtime) initRuntime(ctx context.Context) error {
 	if err := rt.loadComponents(ctx); err != nil {
-		//return err
+		return err
 	}
 
 	api := grpc.NewAPI(grpc.APIOptions{})
@@ -163,8 +164,13 @@ func (rt *Runtime) processComponents(ctx context.Context) error {
 			continue
 		}
 		if err := rt.processor.InitComponent(ctx, comp); err != nil {
-			log.Error("failed to update component", zap.Any("comp", comp))
+			log.Error("failed to init component", zap.Error(err), zap.Any("comp", comp))
 		}
+	}
+
+	//close components
+	if err := rt.processor.CloseAllComponents(ctx); err != nil {
+		log.Error("failed to CloseAllComponents", zap.Error(err))
 	}
 
 	return nil

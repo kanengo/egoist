@@ -5,6 +5,8 @@ import (
 	"github.com/kanengo/egoist/pkg/signals"
 	"github.com/kanengo/goutil/pkg/log"
 	"go.uber.org/zap"
+
+	_ "github.com/kanengo/egoist/cmd/egoistd/components"
 )
 
 func main() {

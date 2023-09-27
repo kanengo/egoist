@@ -212,6 +212,8 @@ func (p *Pulsar) Init(ctx context.Context, metadata pubsub.Metadata) error {
 	p.client = client
 	p.metadata = *m
 
+	log.Info("[Component]pubsub.pulsar init success")
+
 	return nil
 }
 
@@ -492,6 +494,8 @@ func (p *Pulsar) Close() error {
 		}
 	}
 	p.client.Close()
+
+	log.Info("[Component]pubsub.pulsar close success")
 
 	return nil
 }

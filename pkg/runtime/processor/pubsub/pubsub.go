@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
+	_struct "github.com/golang/protobuf/ptypes/struct"
 	contribPubsub "github.com/kanengo/egoist/components_contrib/pubsub"
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/kanengo/egoist/pkg/components/pubsub"
 	"github.com/kanengo/egoist/pkg/resources/components/v1alpha1"
@@ -64,15 +68,30 @@ func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEvent
 	cloudEventType := ""
 	cloudEventSource := ""
 
+	if cet, ok := request.Metadata[components.CloudEventMetadataType]; ok {
+		cloudEventType = cet
+	}
+
+	if ces, ok := request.Metadata[components.CloudEventMetadataSource]; ok {
+		cloudEventSource = ces
+	}
+
 	cloudEvent := &apiv1.CloudEvent{
-		Id:              "",
+		Id:              gonanoid.Must(),
 		Data:            request.Data,
 		Source:          cloudEventSource,
 		SpecVersion:     "1.0",
 		Type:            cloudEventType,
 		DataContentType: "application/protobuf",
-		Timestamp:       0,
-		Extensions:      nil,
+		Timestamp:       time.Now().Unix(),
+		Extensions:      make(map[string]*_struct.Value, len(request.Metadata)),
+	}
+
+	for k, v := range request.Metadata {
+		if _, ok := components.CloudEventMetadataKeys[k]; ok {
+			continue
+		}
+		cloudEvent.Extensions[k] = structpb.NewStringValue(v)
 	}
 
 	data, _ := proto.Marshal(cloudEvent)

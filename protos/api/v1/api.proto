@@ -9,4 +9,6 @@ import "api/v1/pubsub.proto";
 
 service API {
   rpc PublishEvent (PublishEventRequest) returns (PublishEventResponse);
+
+  rpc SubscribeStream (SubscribeRequest) returns (stream SubscribeResponse);
 }

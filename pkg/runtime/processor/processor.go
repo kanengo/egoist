@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	compPubsub "github.com/kanengo/egoist/pkg/components/pubsub"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
 	"github.com/kanengo/egoist/pkg/runtime/processor/pubsub"
+	"github.com/kanengo/goutil/pkg/log"
+	"go.uber.org/zap"
 
 	"github.com/kanengo/egoist/components_contrib"
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
@@ -25,24 +28,33 @@ type PubsubManager interface {
 	BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error)
 }
 
+type componentMangerItem struct {
+	componentManger
+	mu    sync.RWMutex
+	comps map[string]v1alpha1.Component
+}
+
 type Processor struct {
 	pubsub       PubsubManager
-	compManagers map[string]componentManger
+	compManagers map[string]*componentMangerItem
 }
 
 func New(options Options) *Processor {
 	p := &Processor{
-		compManagers: make(map[string]componentManger),
+		compManagers: make(map[string]*componentMangerItem),
 	}
 
-	p.compManagers[components_contrib.TypePubsub] = pubsub.NewManager(pubsub.Options{
-		ID:            options.ID,
-		Namespace:     options.NameSpace,
-		PodName:       options.PodName,
-		ResourcesPath: nil,
-		Registry:      compPubsub.DefaultRegistry,
-		Meta:          &meta.Meta{},
-	})
+	p.compManagers[components_contrib.TypePubsub] = &componentMangerItem{
+		componentManger: pubsub.NewManager(pubsub.Options{
+			ID:            options.ID,
+			Namespace:     options.NameSpace,
+			PodName:       options.PodName,
+			ResourcesPath: nil,
+			Registry:      compPubsub.DefaultRegistry,
+			Meta:          &meta.Meta{},
+		}),
+		comps: make(map[string]v1alpha1.Component, 3),
+	}
 
 	return p
 }
@@ -59,6 +71,7 @@ func parseComponentType(comp v1alpha1.Component) (string, error) {
 }
 
 func (p *Processor) InitComponent(ctx context.Context, comp v1alpha1.Component) error {
+	log.Debug("InitComponent", zap.Any("comp", comp))
 	compTyp, err := parseComponentType(comp)
 	if err != nil {
 		return err
@@ -73,5 +86,26 @@ func (p *Processor) InitComponent(ctx context.Context, comp v1alpha1.Component) 
 		return err
 	}
 
+	mgr.mu.Lock()
+	mgr.comps[comp.Name] = comp
+	mgr.mu.Unlock()
+
 	return nil
+}
+
+func (p *Processor) CloseAllComponents(ctx context.Context) error {
+	var errs []error
+	for _, mgr := range p.compManagers {
+		func() {
+			defer mgr.mu.Unlock()
+			mgr.mu.Lock()
+
+			for _, comp := range mgr.comps {
+				if err := mgr.Close(comp); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}()
+	}
+	return errors.Join(errs...)
 }
