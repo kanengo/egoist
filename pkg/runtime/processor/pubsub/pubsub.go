@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_struct "github.com/golang/protobuf/ptypes/struct"
@@ -11,7 +12,11 @@ import (
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/egoist/pkg/components"
 	"github.com/kanengo/egoist/pkg/runtime/meta"
+	"github.com/kanengo/goutil/pkg/log"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -36,12 +41,17 @@ type Options struct {
 
 type pubsubCompItem struct {
 	Component contribPubsub.PubSub
+	BulkPub   contribPubsub.BulkPublisher
+	BulkSub   contribPubsub.BulkSubscriber
 	Resource  v1alpha1.Component
+
+	closed  atomic.Bool
+	closeCh chan struct{}
 }
 
 type pubSubManager struct {
 	//opts      Options
-	compStore *components.CompStore[pubsubCompItem]
+	compStore *components.CompStore[*pubsubCompItem]
 	meta      *meta.Meta
 	registry  *pubsub.Registry
 
@@ -51,7 +61,7 @@ type pubSubManager struct {
 func NewManager(opts Options) *pubSubManager {
 	pm := &pubSubManager{
 		//opts:      opts,
-		compStore: components.NewCompStore[pubsubCompItem](),
+		compStore: components.NewCompStore[*pubsubCompItem](),
 		meta:      opts.Meta,
 		registry:  pubsub.DefaultRegistry,
 	}
@@ -67,6 +77,7 @@ func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEvent
 
 	cloudEventType := ""
 	cloudEventSource := ""
+	cloudEventId := ""
 
 	if cet, ok := request.Metadata[components.CloudEventMetadataType]; ok {
 		cloudEventType = cet
@@ -76,8 +87,14 @@ func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEvent
 		cloudEventSource = ces
 	}
 
+	if ceid, ok := request.Metadata[components.CloudEventMetadataId]; ok {
+		cloudEventId = ceid
+	} else {
+		cloudEventId = gonanoid.Must()
+	}
+
 	cloudEvent := &apiv1.CloudEvent{
-		Id:              gonanoid.Must(),
+		Id:              cloudEventId,
 		Data:            request.Data,
 		Source:          cloudEventSource,
 		SpecVersion:     "1.0",
@@ -108,9 +125,146 @@ func (p *pubSubManager) Publish(ctx context.Context, request *apiv1.PublishEvent
 	return &apiv1.PublishEventResponse{}, nil
 }
 
-func (p *pubSubManager) BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error) {
-	//TODO implement me
-	panic("implement me")
+func (p *pubSubManager) BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (*apiv1.BulkPublishResponse, error) {
+	psItem, ok := p.compStore.Get(request.PubsubName)
+	if !ok {
+		return nil, fmt.Errorf("no %s pubusb component fonund", request.PubsubName)
+	}
+
+	bulkRequest := &contribPubsub.BulkPublishRequest{
+		Entries:    make([]contribPubsub.BulkMessageEntry, 0, len(request.Entries)),
+		PubsubName: request.PubsubName,
+		Topic:      request.Topic,
+		Metadata:   request.Metadata,
+	}
+
+	for _, entry := range request.Entries {
+		cloudEventType := ""
+		cloudEventSource := ""
+		cloudEventId := ""
+
+		if cet, ok := entry.Metadata[components.CloudEventMetadataType]; ok {
+			cloudEventType = cet
+		}
+
+		if ces, ok := entry.Metadata[components.CloudEventMetadataSource]; ok {
+			cloudEventSource = ces
+		}
+
+		if ceid, ok := request.Metadata[components.CloudEventMetadataId]; ok {
+			cloudEventId = ceid
+		} else {
+			cloudEventId = gonanoid.Must()
+		}
+
+		cloudEvent := &apiv1.CloudEvent{
+			Id:              cloudEventId,
+			Data:            entry.Event,
+			Source:          cloudEventSource,
+			SpecVersion:     "1.0",
+			Type:            cloudEventType,
+			DataContentType: "application/protobuf",
+			Timestamp:       time.Now().Unix(),
+			Extensions:      make(map[string]*_struct.Value, len(request.Metadata)),
+		}
+
+		for k, v := range request.Metadata {
+			if _, ok := components.CloudEventMetadataKeys[k]; ok {
+				continue
+			}
+			cloudEvent.Extensions[k] = structpb.NewStringValue(v)
+		}
+
+		data, _ := proto.Marshal(cloudEvent)
+
+		message := contribPubsub.BulkMessageEntry{
+			EntryId:     cloudEventId,
+			Event:       data,
+			ContentType: "application/protobuf",
+			Metadata:    nil,
+		}
+
+		bulkRequest.Entries = append(bulkRequest.Entries, message)
+	}
+
+	bulkResponse, err := psItem.BulkPub.BulkPublish(ctx, bulkRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	response := &apiv1.BulkPublishResponse{FailedEntries: make([]*apiv1.BulkPublishResponseFailedEntry, 0, len(bulkResponse.FailedEntry))}
+	for _, failedEntry := range bulkResponse.FailedEntry {
+		response.FailedEntries = append(response.FailedEntries, &apiv1.BulkPublishResponseFailedEntry{
+			EntryId: failedEntry.EntryId,
+			Error:   err.Error(),
+		})
+	}
+
+	return response, nil
+}
+
+func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamServer apiv1.API_SubscribeStreamServer) error {
+	wg := sync.WaitGroup{}
+	for _, config := range request.Configs {
+		if config.Topic == "" {
+			return status.Error(codes.InvalidArgument, "topic must not empty")
+		}
+		psItem, ok := p.compStore.Get(config.PubsubName)
+		if !ok {
+			return status.Error(codes.InvalidArgument, fmt.Sprintf("no %s pubusb component fonund", config.PubsubName))
+		}
+
+		if config.EnableBulk {
+			subscribeRequest := &contribPubsub.SubscribeRequest{
+				Topic:    config.Topic,
+				Metadata: config.Metadata,
+				BulkSubscribeConfig: contribPubsub.BulkSubscribeConfig{
+					MaxMessagesCount:   int(config.MaxBulkEventCount),
+					MaxAwaitDurationMs: int(config.MaxBulkEventAwaitMs),
+				},
+			}
+
+			wg.Add(1)
+			if psItem.BulkSub != nil {
+				go func() {
+					defer wg.Done()
+					err := psItem.BulkSub.BulkSubscribe(streamServer.Context(), subscribeRequest, subscribeStreamBulkHandler(streamServer))
+					if err != nil {
+						log.Error("SubscribeStream BulkSubscribe failed", zap.Error(err), zap.String("topic", config.Topic))
+						return
+					}
+					select {
+					case <-psItem.closeCh:
+					}
+				}()
+			} else {
+
+			}
+
+		} else {
+			subscribeRequest := &contribPubsub.SubscribeRequest{
+				Topic:               config.Topic,
+				Metadata:            config.Metadata,
+				BulkSubscribeConfig: contribPubsub.BulkSubscribeConfig{},
+			}
+			wg.Add(1)
+			go func() {
+				defer func() {
+					wg.Done()
+				}()
+				if err := psItem.Component.Subscribe(streamServer.Context(), subscribeRequest, subscribeStreamHandler(streamServer)); err != nil {
+					log.Debug("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
+					return
+				}
+				select {
+				case <-psItem.closeCh:
+					log.Info("SubscribeStream component closed", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
+				}
+			}()
+		}
+	}
+	wg.Done()
+	return nil
 }
 
 func (p *pubSubManager) Init(ctx context.Context, comp v1alpha1.Component) error {
@@ -139,26 +293,47 @@ func (p *pubSubManager) Init(ctx context.Context, comp v1alpha1.Component) error
 		}()
 	}
 
-	p.compStore.Set(comp.Name, pubsubCompItem{
+	item := &pubsubCompItem{
 		Component: ps,
 		Resource:  comp,
-	})
+		closeCh:   make(chan struct{}),
+	}
+
+	if bc, ok := ps.(contribPubsub.BulkPublisher); ok {
+		item.BulkPub = bc
+	} else {
+		item.BulkPub = &bulkPubsub{ps: ps}
+	}
+
+	if bs, ok := ps.(contribPubsub.BulkSubscriber); ok {
+		item.BulkSub = bs
+	}
+
+	p.compStore.Set(comp.Name, item)
 
 	return nil
 }
 
 func (p *pubSubManager) Close(comp v1alpha1.Component) error {
 	p.lock.Lock()
-	defer p.lock.Unlock()
 
 	ps, ok := p.compStore.Get(comp.Name)
 	if !ok {
+		p.lock.Unlock()
+		return nil
+	}
+
+	p.lock.Unlock()
+
+	if !ps.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
 	if err := ps.Component.Close(); err != nil {
 		return err
 	}
+
+	close(ps.closeCh)
 
 	p.compStore.Del(comp.Name)
 

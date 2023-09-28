@@ -15,6 +15,15 @@ type BulkPublishRequest struct {
 	Metadata   map[string]string  `json:"metadata"`
 }
 
+type FailedEntry struct {
+	EntryId string
+	Err     error
+}
+
+type BulkPublishResponse struct {
+	FailedEntry []FailedEntry
+}
+
 // SubscribeRequest is the request to subscribe to a topic.
 type SubscribeRequest struct {
 	Topic               string              `json:"topic"`

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package api.v1;
 
+import "api/v1/cloudevent.proto";
+
 option go_package = "github.com/kanengo/egoist/pkg/api/v1;api";
 option csharp_namespace = "Egoist.Client.Autogen.Grpc.v1";
 
@@ -40,8 +42,24 @@ message BulkPublishResponseFailedEntry {
   string error = 2;
 }
 
-message SubscribeRequest {
-
+message SubscribeConfig {
+  string pubsub_name = 1;
+  string topic = 2;
+  bool enable_bulk = 3;
+  int32 max_bulk_event_count = 4;
+  int32 max_bulk_event_await_ms = 5; //ms
+  map<string, string> metadata = 6;
 }
 
-message SubscribeResponse {}
+message SubscribeRequest {
+  repeated SubscribeConfig configs = 1;
+}
+
+message SubscribeEntry {
+  string topic = 1;
+  CloudEvent events = 2;
+}
+
+message SubscribeResponse {
+  repeated SubscribeEntry entries = 1;
+}

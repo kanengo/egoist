@@ -25,7 +25,8 @@ type componentManger interface {
 
 type PubsubManager interface {
 	Publish(ctx context.Context, request *apiv1.PublishEventRequest) (*apiv1.PublishEventResponse, error)
-	BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (apiv1.BulkPublishResponse, error)
+	BulkPublish(ctx context.Context, request *apiv1.BulkPublishRequest) (*apiv1.BulkPublishResponse, error)
+	SubscribeStream(request *apiv1.SubscribeRequest, streamServer apiv1.API_SubscribeStreamServer) error
 }
 
 type componentMangerItem struct {
@@ -43,18 +44,21 @@ func New(options Options) *Processor {
 	p := &Processor{
 		compManagers: make(map[string]*componentMangerItem),
 	}
+	pubsubMgr := pubsub.NewManager(pubsub.Options{
+		ID:            options.ID,
+		Namespace:     options.NameSpace,
+		PodName:       options.PodName,
+		ResourcesPath: nil,
+		Registry:      compPubsub.DefaultRegistry,
+		Meta:          &meta.Meta{},
+	})
 
-	p.compManagers[components_contrib.TypePubsub] = &componentMangerItem{
-		componentManger: pubsub.NewManager(pubsub.Options{
-			ID:            options.ID,
-			Namespace:     options.NameSpace,
-			PodName:       options.PodName,
-			ResourcesPath: nil,
-			Registry:      compPubsub.DefaultRegistry,
-			Meta:          &meta.Meta{},
-		}),
-		comps: make(map[string]v1alpha1.Component, 3),
+	p.pubsub = pubsubMgr
+	mgrItem := &componentMangerItem{
+		componentManger: pubsubMgr,
+		comps:           make(map[string]v1alpha1.Component, 3),
 	}
+	p.compManagers[components_contrib.TypePubsub] = mgrItem
 
 	return p
 }

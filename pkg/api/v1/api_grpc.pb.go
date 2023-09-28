@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type APIClient interface {
 	PublishEvent(ctx context.Context, in *PublishEventRequest, opts ...grpc.CallOption) (*PublishEventResponse, error)
+	SubscribeStream(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (API_SubscribeStreamClient, error)
 }
 
 type aPIClient struct {
@@ -42,11 +43,44 @@ func (c *aPIClient) PublishEvent(ctx context.Context, in *PublishEventRequest, o
 	return out, nil
 }
 
+func (c *aPIClient) SubscribeStream(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (API_SubscribeStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &API_ServiceDesc.Streams[0], "/api.v1.API/SubscribeStream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &aPISubscribeStreamClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type API_SubscribeStreamClient interface {
+	Recv() (*SubscribeResponse, error)
+	grpc.ClientStream
+}
+
+type aPISubscribeStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *aPISubscribeStreamClient) Recv() (*SubscribeResponse, error) {
+	m := new(SubscribeResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // APIServer is the server API for API service.
 // All implementations must embed UnimplementedAPIServer
 // for forward compatibility
 type APIServer interface {
 	PublishEvent(context.Context, *PublishEventRequest) (*PublishEventResponse, error)
+	SubscribeStream(*SubscribeRequest, API_SubscribeStreamServer) error
 	mustEmbedUnimplementedAPIServer()
 }
 
@@ -56,6 +90,9 @@ type UnimplementedAPIServer struct {
 
 func (UnimplementedAPIServer) PublishEvent(context.Context, *PublishEventRequest) (*PublishEventResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PublishEvent not implemented")
+}
+func (UnimplementedAPIServer) SubscribeStream(*SubscribeRequest, API_SubscribeStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method SubscribeStream not implemented")
 }
 func (UnimplementedAPIServer) mustEmbedUnimplementedAPIServer() {}
 
@@ -88,6 +125,27 @@ func _API_PublishEvent_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _API_SubscribeStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(APIServer).SubscribeStream(m, &aPISubscribeStreamServer{stream})
+}
+
+type API_SubscribeStreamServer interface {
+	Send(*SubscribeResponse) error
+	grpc.ServerStream
+}
+
+type aPISubscribeStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *aPISubscribeStreamServer) Send(m *SubscribeResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 // API_ServiceDesc is the grpc.ServiceDesc for API service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -100,6 +158,12 @@ var API_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _API_PublishEvent_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SubscribeStream",
+			Handler:       _API_SubscribeStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/v1/api.proto",
 }

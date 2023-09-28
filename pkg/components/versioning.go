@@ -18,11 +18,13 @@ const (
 
 	CloudEventMetadataType   = "cloudevent.type"
 	CloudEventMetadataSource = "cloudevent.source"
+	CloudEventMetadataId     = "cloudevent.id"
 )
 
 var (
 	CloudEventMetadataKeys = map[string]struct{}{
 		CloudEventMetadataType:   {},
 		CloudEventMetadataSource: {},
+		CloudEventMetadataId:     {},
 	}
 )

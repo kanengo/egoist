@@ -85,7 +85,9 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 		return err
 	}
 
-	api := grpc.NewAPI(grpc.APIOptions{})
+	api := grpc.NewAPI(grpc.APIOptions{
+		Processor: rt.processor,
+	})
 	if err := rt.startGRPCAPIServer(api); err != nil {
 		return fmt.Errorf("faild to start API gRPC server: %w", err)
 	}
