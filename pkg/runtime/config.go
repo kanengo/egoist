@@ -116,7 +116,7 @@ func (c *Config) toInternalConfig() *internalConfig {
 		if err != nil {
 			log.Fatal("failed to init config when get current user", zap.Error(err))
 		}
-		intCfg.resourcesPath = []string{path.Join(u.HomeDir, ".egoist/components")}
+		intCfg.resourcesPath = []string{path.Join(u.HomeDir, ".egoist", "components")}
 	} else {
 		intCfg.resourcesPath = strings.Split(c.ResourcesPath, ",")
 	}

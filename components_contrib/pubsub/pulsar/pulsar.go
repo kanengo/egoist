@@ -370,7 +370,7 @@ func getSubscribeType(metadata map[string]string) pulsar.SubscriptionType {
 	return subsType
 }
 
-func (p *Pulsar) Subscribe(ctx context.Context, req pubsub.SubscribeRequest, handler pubsub.Handler) error {
+func (p *Pulsar) Subscribe(ctx context.Context, req *pubsub.SubscribeRequest, handler pubsub.Handler) error {
 	if p.closed.Load() {
 		return errors.New("component is closed")
 	}
@@ -428,7 +428,7 @@ func (p *Pulsar) Subscribe(ctx context.Context, req pubsub.SubscribeRequest, han
 	return nil
 }
 
-func (p *Pulsar) listenMessage(ctx context.Context, req pubsub.SubscribeRequest, consumer pulsar.Consumer, handler pubsub.Handler) {
+func (p *Pulsar) listenMessage(ctx context.Context, req *pubsub.SubscribeRequest, consumer pulsar.Consumer, handler pubsub.Handler) {
 	defer consumer.Close()
 
 	originTopic := req.Topic

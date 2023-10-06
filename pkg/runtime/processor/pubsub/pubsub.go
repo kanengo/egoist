@@ -204,6 +204,7 @@ func (p *pubSubManager) BulkPublish(ctx context.Context, request *apiv1.BulkPubl
 }
 
 func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamServer apiv1.API_SubscribeStreamServer) error {
+	log.Debug("SubscribeStream start request", zap.Any("request", request))
 	wg := sync.WaitGroup{}
 	for _, config := range request.Configs {
 		if config.Topic == "" {
@@ -223,6 +224,12 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 					MaxAwaitDurationMs: int(config.MaxBulkEventAwaitMs),
 				},
 			}
+			if subscribeRequest.BulkSubscribeConfig.MaxMessagesCount == 0 {
+				subscribeRequest.BulkSubscribeConfig.MaxMessagesCount = 1000
+			}
+			if subscribeRequest.BulkSubscribeConfig.MaxAwaitDurationMs == 0 {
+				subscribeRequest.BulkSubscribeConfig.MaxAwaitDurationMs = 100
+			}
 
 			wg.Add(1)
 			if psItem.BulkSub != nil {
@@ -238,9 +245,54 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 					}
 				}()
 			} else {
+				bulkCh := make(chan *apiv1.SubscribeEntry, subscribeRequest.BulkSubscribeConfig.MaxMessagesCount)
+				err := psItem.Component.Subscribe(streamServer.Context(), subscribeRequest, func(ctx context.Context, msg *contribPubsub.NewMessage) error {
+					entry := &apiv1.SubscribeEntry{
+						Topic:  msg.Topic,
+						Events: nil,
+					}
+					cloudEvent := &apiv1.CloudEvent{}
+					err := proto.Unmarshal(msg.Data, cloudEvent)
+					if err != nil {
+						log.Error("SubscribeStream handler proto.Unmarshal failed", zap.Error(err), zap.String("topic", msg.Topic))
+						return err
+					}
+					bulkCh <- entry
+					return nil
+				})
+				if err != nil {
+					log.Error("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
+					return err
+				}
 
+				go func() {
+					ticker := time.NewTicker(time.Duration(subscribeRequest.BulkSubscribeConfig.MaxAwaitDurationMs) * time.Millisecond)
+					bulkEntries := make([]*apiv1.SubscribeEntry, 0, subscribeRequest.BulkSubscribeConfig.MaxMessagesCount)
+					for {
+						select {
+						case <-ticker.C:
+							if len(bulkEntries) > 0 {
+								log.Debug("SubscribeStream bulk max await duration", zap.Int("count", len(bulkEntries)))
+								err := streamServer.Send(&apiv1.SubscribeResponse{Entries: bulkEntries})
+								if err != nil {
+									log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err))
+								}
+								bulkEntries = bulkEntries[0:]
+							}
+						case entry := <-bulkCh:
+							bulkEntries = append(bulkEntries, entry)
+							if len(bulkEntries) >= subscribeRequest.BulkSubscribeConfig.MaxMessagesCount {
+								log.Debug("SubscribeStream bulk max message count", zap.Int("count", len(bulkEntries)))
+								err := streamServer.Send(&apiv1.SubscribeResponse{Entries: bulkEntries})
+								if err != nil {
+									log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err))
+								}
+								bulkEntries = bulkEntries[0:]
+							}
+						}
+					}
+				}()
 			}
-
 		} else {
 			subscribeRequest := &contribPubsub.SubscribeRequest{
 				Topic:               config.Topic,
@@ -263,7 +315,7 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 			}()
 		}
 	}
-	wg.Done()
+	wg.Wait()
 	return nil
 }
 
