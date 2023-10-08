@@ -100,6 +100,8 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 		log.Info("API gRPC server is running", zap.Any("port", rt.internalConfig.grpcPort))
 	}
 
+	//app channel
+
 	return nil
 }
 

@@ -35,6 +35,7 @@ type Config struct {
 	GracefulShutdownSeconds int
 	UnixDomainSocket        string
 	APIListenAddress        string
+	AppUnixDomainSocket     string
 }
 
 type internalConfig struct {
@@ -48,6 +49,9 @@ type internalConfig struct {
 	readBufferSize           int
 	unixDomainSocket         string
 	apiListenAddresses       []string
+	appUnixDomainSocket      string
+	appMaxReadBufferSize     int
+	appMaxWriteBufferSize    int
 
 	resourcesPath []string
 }
@@ -58,11 +62,12 @@ func getNamespace() string {
 
 func (c *Config) toInternalConfig() *internalConfig {
 	intCfg := &internalConfig{
-		namespace:        c.Namespace,
-		id:               c.AppId,
-		appPort:          c.AppPort,
-		grpcPort:         c.GrpcPort,
-		unixDomainSocket: c.UnixDomainSocket,
+		namespace:           c.Namespace,
+		id:                  c.AppId,
+		appPort:             c.AppPort,
+		grpcPort:            c.GrpcPort,
+		unixDomainSocket:    c.UnixDomainSocket,
+		appUnixDomainSocket: c.AppUnixDomainSocket,
 	}
 
 	if intCfg.namespace == "" {
@@ -93,6 +98,14 @@ func (c *Config) toInternalConfig() *internalConfig {
 		intCfg.readBufferSize = DefaultReadBufferSize
 	}
 
+	if intCfg.appMaxWriteBufferSize == 0 {
+		intCfg.appMaxWriteBufferSize = DefaultMaxRequestBodySize
+	}
+
+	if intCfg.appMaxReadBufferSize == 0 {
+		intCfg.appMaxReadBufferSize = DefaultReadBufferSize
+	}
+
 	intCfg.hostAddress = hostAddress
 
 	if intCfg.unixDomainSocket == "" {
@@ -100,7 +113,15 @@ func (c *Config) toInternalConfig() *internalConfig {
 		if err != nil {
 			log.Fatal("failed to init config when get current user", zap.Error(err))
 		}
-		intCfg.unixDomainSocket = path.Join(u.HomeDir, ".egoist", intCfg.unixDomainSocket)
+		intCfg.unixDomainSocket = path.Join(u.HomeDir, ".egoist")
+	}
+
+	if intCfg.appUnixDomainSocket == "" {
+		u, err := user.Current()
+		if err != nil {
+			log.Fatal("failed to init config when get current user", zap.Error(err))
+		}
+		intCfg.unixDomainSocket = path.Join(u.HomeDir, ".egoist")
 	}
 
 	if intCfg.appPort == 0 {
