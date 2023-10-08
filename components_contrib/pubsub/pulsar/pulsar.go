@@ -280,6 +280,7 @@ func (p *Pulsar) Publish(ctx context.Context, req *pubsub.PublishRequest) error 
 		return err
 	}
 
+	log.Debug("[Component]Pulsar Publish", zap.Any("msg", msg))
 	if _, err = producer.Send(ctx, msg); err != nil {
 		return err
 	}
@@ -387,6 +388,12 @@ func (p *Pulsar) Subscribe(ctx context.Context, req *pubsub.SubscribeRequest, ha
 		NackRedeliveryDelay: p.metadata.RedeliveryDelay,
 	}
 
+	if req.Metadata != nil {
+		if consumerID, ok := req.Metadata[pubsub.PubsubMetadataConsumerID]; ok {
+			options.SubscriptionName = consumerID
+		}
+	}
+
 	if p.useConsumerEncryption() {
 		var reader crypto.KeyReader
 		if isValidPEM(p.metadata.PublicKey) {
@@ -456,7 +463,7 @@ func (p *Pulsar) listenMessage(ctx context.Context, req *pubsub.SubscribeRequest
 			}
 
 		case <-ctx.Done():
-			log.Error("Subscription context done. Closing consumer", zap.Error(ctx.Err()))
+			log.Info("Subscription context done. Closing consumer", zap.Error(ctx.Err()))
 			return
 		}
 	}
@@ -476,7 +483,9 @@ func (p *Pulsar) handleMessage(ctx context.Context, originTopic string, msg puls
 		return err
 	}
 
-	_ = msg.Ack(msg.Message)
+	if err := msg.Ack(msg.Message); err != nil {
+		log.Error("Processing Pulsar ask failed", zap.Error(err), zap.String("id", msg.ID().String()))
+	}
 	return nil
 }
 

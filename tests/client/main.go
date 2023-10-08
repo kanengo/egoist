@@ -3,20 +3,21 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"time"
+
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
 	"github.com/kanengo/goutil/pkg/log"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"io"
-	"time"
 )
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cli, err := grpc.DialContext(ctx, "C:/Users/leeka/.egoist/egoist-test-grpc.socket", grpc.WithTransportCredentials(
+	cli, err := grpc.DialContext(ctx, "unix:///Users/kanonlee/.egoist/egoist-test-grpc.socket", grpc.WithTransportCredentials(
 		insecure.NewCredentials()))
 	if err != nil {
 		log.Fatal("", zap.Error(err))
@@ -33,7 +34,9 @@ func main() {
 				EnableBulk:          true,
 				MaxBulkEventCount:   100,
 				MaxBulkEventAwaitMs: 100,
-				Metadata:            nil,
+				Metadata: map[string]string{
+					"pubsubConsumerID": "test",
+				},
 			},
 		},
 	})
@@ -69,5 +72,5 @@ func main() {
 		ContentType: "",
 	})
 
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 3600)
 }

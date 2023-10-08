@@ -235,39 +235,50 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 			if psItem.BulkSub != nil {
 				go func() {
 					defer wg.Done()
-					err := psItem.BulkSub.BulkSubscribe(streamServer.Context(), subscribeRequest, subscribeStreamBulkHandler(streamServer))
+					ctx := streamServer.Context()
+					h := &subscribeStreamHandler{streamServer: streamServer, ctx: ctx}
+					err := psItem.BulkSub.BulkSubscribe(ctx, subscribeRequest, h.bulkHandler())
 					if err != nil {
 						log.Error("SubscribeStream BulkSubscribe failed", zap.Error(err), zap.String("topic", config.Topic))
 						return
 					}
 					select {
 					case <-psItem.closeCh:
+						log.Info("SubscribeStream component closed", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
+					case <-ctx.Done():
+						log.Info("SubscribeStream context done", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
 					}
 				}()
 			} else {
-				bulkCh := make(chan *apiv1.SubscribeEntry, subscribeRequest.BulkSubscribeConfig.MaxMessagesCount)
-				err := psItem.Component.Subscribe(streamServer.Context(), subscribeRequest, func(ctx context.Context, msg *contribPubsub.NewMessage) error {
-					entry := &apiv1.SubscribeEntry{
-						Topic:  msg.Topic,
-						Events: nil,
-					}
-					cloudEvent := &apiv1.CloudEvent{}
-					err := proto.Unmarshal(msg.Data, cloudEvent)
-					if err != nil {
-						log.Error("SubscribeStream handler proto.Unmarshal failed", zap.Error(err), zap.String("topic", msg.Topic))
-						return err
-					}
-					bulkCh <- entry
-					return nil
-				})
-				if err != nil {
-					log.Error("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
-					return err
-				}
-
 				go func() {
 					ticker := time.NewTicker(time.Duration(subscribeRequest.BulkSubscribeConfig.MaxAwaitDurationMs) * time.Millisecond)
 					bulkEntries := make([]*apiv1.SubscribeEntry, 0, subscribeRequest.BulkSubscribeConfig.MaxMessagesCount)
+					defer func() {
+						ticker.Stop()
+						wg.Done()
+					}()
+					ctx := streamServer.Context()
+					bulkCh := make(chan *apiv1.SubscribeEntry, subscribeRequest.BulkSubscribeConfig.MaxMessagesCount)
+					err := psItem.Component.Subscribe(ctx, subscribeRequest, func(ctx context.Context, msg *contribPubsub.NewMessage) error {
+						cloudEvent := &apiv1.CloudEvent{}
+						err := proto.Unmarshal(msg.Data, cloudEvent)
+						if err != nil {
+							log.Error("SubscribeStream handler proto.Unmarshal failed", zap.Error(err), zap.String("topic", msg.Topic))
+							return err
+						}
+						entry := &apiv1.SubscribeEntry{
+							Topic:  msg.Topic,
+							Events: cloudEvent,
+						}
+						//log.Debug("Subscribe cloudevent", zap.Any("cloudEvent", cloudEvent))
+						bulkCh <- entry
+						return nil
+					})
+					if err != nil {
+						log.Error("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
+						return
+					}
+
 					for {
 						select {
 						case <-ticker.C:
@@ -276,8 +287,9 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 								err := streamServer.Send(&apiv1.SubscribeResponse{Entries: bulkEntries})
 								if err != nil {
 									log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err))
+									return
 								}
-								bulkEntries = bulkEntries[0:]
+								bulkEntries = bulkEntries[:0]
 							}
 						case entry := <-bulkCh:
 							bulkEntries = append(bulkEntries, entry)
@@ -286,9 +298,16 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 								err := streamServer.Send(&apiv1.SubscribeResponse{Entries: bulkEntries})
 								if err != nil {
 									log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err))
+									return
 								}
-								bulkEntries = bulkEntries[0:]
+								bulkEntries = bulkEntries[:0]
 							}
+						case <-psItem.closeCh:
+							log.Info("SubscribeStream component closed", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
+							return
+						case <-ctx.Done():
+							log.Info("SubscribeStream stream done", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
+							return
 						}
 					}
 				}()
@@ -299,23 +318,28 @@ func (p *pubSubManager) SubscribeStream(request *apiv1.SubscribeRequest, streamS
 				Metadata:            config.Metadata,
 				BulkSubscribeConfig: contribPubsub.BulkSubscribeConfig{},
 			}
-			wg.Add(1)
 			go func() {
 				defer func() {
 					wg.Done()
 				}()
-				if err := psItem.Component.Subscribe(streamServer.Context(), subscribeRequest, subscribeStreamHandler(streamServer)); err != nil {
-					log.Debug("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
+				ctx := streamServer.Context()
+				h := &subscribeStreamHandler{streamServer: streamServer, ctx: ctx}
+				if err := psItem.Component.Subscribe(ctx, subscribeRequest, h.handler()); err != nil {
+					log.Error("SubscribeStream Subscribe failed", zap.Error(err), zap.String("topic", config.Topic))
 					return
 				}
 				select {
 				case <-psItem.closeCh:
 					log.Info("SubscribeStream component closed", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
+				case <-ctx.Done():
+					log.Info("SubscribeStream context done", zap.String("topic", config.Topic), zap.String("pubsubName", config.PubsubName))
 				}
 			}()
 		}
 	}
+	log.Debug("SubscribeStream listening")
 	wg.Wait()
+	log.Debug("SubscribeStream done")
 	return nil
 }
 

@@ -39,20 +39,32 @@ func (b *bulkPubsub) BulkSubscribe(ctx context.Context, req *contribPubsub.Subsc
 	return nil
 }
 
-func subscribeStreamHandler(streamServer apiv1.API_SubscribeStreamServer) contribPubsub.Handler {
+type subscribeStreamHandler struct {
+	streamServer apiv1.API_SubscribeStreamServer
+	ctx          context.Context
+	//cancel       context.CancelFunc
+}
+
+func (h *subscribeStreamHandler) handler() contribPubsub.Handler {
 	return func(ctx context.Context, msg *contribPubsub.NewMessage) error {
-		entry := &apiv1.SubscribeEntry{
-			Topic:  msg.Topic,
-			Events: nil,
-		}
 		cloudEvent := &apiv1.CloudEvent{}
 		err := proto.Unmarshal(msg.Data, cloudEvent)
 		if err != nil {
 			log.Error("SubscribeStream handler proto.Unmarshal failed", zap.Error(err), zap.String("topic", msg.Topic))
 			return err
 		}
-		err = streamServer.Send(&apiv1.SubscribeResponse{Entries: []*apiv1.SubscribeEntry{entry}})
+		entry := &apiv1.SubscribeEntry{
+			Topic:  msg.Topic,
+			Events: cloudEvent,
+		}
+		err = h.streamServer.Send(&apiv1.SubscribeResponse{Entries: []*apiv1.SubscribeEntry{entry}})
 		if err != nil {
+			//if s, ok := status.FromError(err); ok {
+			//	if s.Code() == codes.Unavailable {
+			//		h.cancel()
+			//		return err
+			//	}
+			//}
 			log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err), zap.String("topic", msg.Topic))
 			return err
 		}
@@ -60,24 +72,30 @@ func subscribeStreamHandler(streamServer apiv1.API_SubscribeStreamServer) contri
 	}
 }
 
-func subscribeStreamBulkHandler(streamServer apiv1.API_SubscribeStreamServer) contribPubsub.BulkHandler {
+func (h *subscribeStreamHandler) bulkHandler() contribPubsub.BulkHandler {
 	return func(ctx context.Context, msgs []*contribPubsub.NewMessage) error {
 		entries := make([]*apiv1.SubscribeEntry, 0, len(msgs))
 		for _, msg := range msgs {
-			entry := &apiv1.SubscribeEntry{
-				Topic:  msg.Topic,
-				Events: nil,
-			}
 			cloudEvent := &apiv1.CloudEvent{}
 			err := proto.Unmarshal(msg.Data, cloudEvent)
 			if err != nil {
 				log.Error("SubscribeStream handler proto.Unmarshal failed", zap.Error(err), zap.String("topic", msg.Topic))
 				return err
 			}
+			entry := &apiv1.SubscribeEntry{
+				Topic:  msg.Topic,
+				Events: cloudEvent,
+			}
 			entries = append(entries, entry)
 		}
-		err := streamServer.Send(&apiv1.SubscribeResponse{Entries: entries})
+		err := h.streamServer.Send(&apiv1.SubscribeResponse{Entries: entries})
 		if err != nil {
+			//if s, ok := status.FromError(err); ok {
+			//	if s.Code() == codes.Unavailable {
+			//		h.cancel()
+			//		return err
+			//	}
+			//}
 			log.Error("SubscribeStream handler streamServer.Send failed", zap.Error(err))
 			return err
 		}
