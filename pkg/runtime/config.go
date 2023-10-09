@@ -121,7 +121,7 @@ func (c *Config) toInternalConfig() *internalConfig {
 		if err != nil {
 			log.Fatal("failed to init config when get current user", zap.Error(err))
 		}
-		intCfg.unixDomainSocket = path.Join(u.HomeDir, ".egoist")
+		intCfg.appUnixDomainSocket = path.Join(u.HomeDir, ".egoist")
 	}
 
 	if intCfg.appPort == 0 {

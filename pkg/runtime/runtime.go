@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kanengo/egoist/pkg/grpc"
+	"github.com/kanengo/egoist/pkg/grpc/manager"
 	"github.com/kanengo/egoist/pkg/messaging"
 
 	"github.com/kanengo/egoist/pkg/components"
@@ -29,7 +30,8 @@ type Runtime struct {
 	runnerCloser *concurrency.RunnerCloserManager
 	wg           sync.WaitGroup
 
-	api grpc.API
+	api        grpc.API
+	appChannel *manager.Channel
 }
 
 func newRuntime(intCfg *internalConfig) (*Runtime, error) {
@@ -70,7 +72,7 @@ func newRuntime(intCfg *internalConfig) (*Runtime, error) {
 			var errs []error
 
 			rt.wg.Wait()
-			errs = append(errs, rt.cleanSocket())
+			errs = append(errs, rt.cleanSocket(), rt.appChannel.Close())
 			return errors.Join(errs...)
 		},
 	); err != nil {
@@ -101,6 +103,14 @@ func (rt *Runtime) initRuntime(ctx context.Context) error {
 	}
 
 	//app channel
+	appChannelCfg := rt.getDefaultAppChannelConfig()
+	appChannel, err := manager.NewAppChannel(ctx, appChannelCfg)
+	if err != nil {
+		log.Error(" manager.NewAPPChannel", zap.Error(err), zap.Any("config", appChannelCfg))
+		return fmt.Errorf("faild to new APP channel: %w", err)
+	}
+
+	rt.appChannel = appChannel
 
 	return nil
 }
@@ -124,6 +134,16 @@ func (rt *Runtime) getDefaultGPRCServerConfig() grpc.ServerConfig {
 		MaxRequestBodySizeMB: rt.internalConfig.maxRequestBodySize,
 		UnixDomainSocket:     rt.internalConfig.unixDomainSocket,
 		ReadBufferSizeKB:     rt.internalConfig.readBufferSize,
+	}
+}
+
+func (rt *Runtime) getDefaultAppChannelConfig() manager.AppChannelConfig {
+	return manager.AppChannelConfig{
+		AppID:              rt.internalConfig.id,
+		Port:               rt.internalConfig.appPort,
+		UnixDomainSocket:   rt.internalConfig.appUnixDomainSocket,
+		MaxReadBufferSize:  rt.internalConfig.appMaxReadBufferSize,
+		MaxWriteBufferSize: rt.internalConfig.appMaxWriteBufferSize,
 	}
 }
 

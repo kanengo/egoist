@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"time"
 
 	apiv1 "github.com/kanengo/egoist/pkg/api/v1"
@@ -16,6 +18,24 @@ import (
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	defer func() {
+		_ = os.Remove("/Users/kanonlee/.egoist/egoist-app-test-grpc.socket")
+	}()
+	l, err := net.Listen("unix", "/Users/kanonlee/.egoist/egoist-app-test-grpc.socket")
+	if err != nil {
+		log.Fatal("Failed to listen gRPC server on Unix",
+			zap.Error(err))
+	}
+	svr := grpc.NewServer()
+	defer func() {
+		svr.GracefulStop()
+	}()
+	go func() {
+		if err := svr.Serve(l); err != nil {
+			log.Fatal("serve failed", zap.Error(err))
+		}
+	}()
 
 	cli, err := grpc.DialContext(ctx, "unix:///Users/kanonlee/.egoist/egoist-test-grpc.socket", grpc.WithTransportCredentials(
 		insecure.NewCredentials()))
@@ -72,5 +92,5 @@ func main() {
 		ContentType: "",
 	})
 
-	time.Sleep(time.Second * 3600)
+	time.Sleep(time.Second * 10)
 }

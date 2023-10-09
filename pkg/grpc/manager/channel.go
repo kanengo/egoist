@@ -6,5 +6,13 @@ import (
 
 type Channel struct {
 	appId string
-	cli   grpc.ClientConnInterface
+	cli   *grpc.ClientConn
+}
+
+func (c *Channel) Close() error {
+	if c.cli == nil {
+		return nil
+	}
+
+	return c.cli.Close()
 }
