@@ -52,6 +52,7 @@ func NewAppChannel(ctx context.Context, config AppChannelConfig) (*Channel, erro
 	}
 
 	log.Debug(fmt.Sprintf("app channel target:%s", target))
+	channel.target = target
 
 	go func() {
 		for {
@@ -62,7 +63,6 @@ func NewAppChannel(ctx context.Context, config AppChannelConfig) (*Channel, erro
 				log.Debug("app channel dial failed, retry", zap.Error(err))
 				continue
 			}
-
 			log.Debug("app channel init success")
 			channel.cli = c
 			break

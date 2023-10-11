@@ -5,8 +5,9 @@ import (
 )
 
 type Channel struct {
-	appId string
-	cli   *grpc.ClientConn
+	appId  string
+	cli    *grpc.ClientConn
+	target string
 }
 
 func (c *Channel) Close() error {
