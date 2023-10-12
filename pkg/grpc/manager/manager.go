@@ -51,6 +51,7 @@ func (m *Manager) Init(ctx context.Context) error {
 func (m *Manager) checkIdleChannels() {
 	go func() {
 		for {
+			//var idleTimeoutTargets []string
 			m.idleMu.RLock()
 			if len(m.idles) == 0 {
 				continue
@@ -96,23 +97,35 @@ func (m *Manager) newChannel(ctx context.Context, target string) (*Channel, erro
 			m.rwMutex.Unlock()
 
 			go func() {
-				b := channel.cli.WaitForStateChange(ctx, connectivity.Ready)
-				if !b {
-					return
-				}
-				state := channel.cli.GetState()
-				log.Debug("[gRPC]channel state change", zap.Any("state", state))
-				idleChannel := IdleChannel{
-					Channel:  channel,
-					IdleTime: time.Now(),
-				}
-				m.rwMutex.Lock()
-				delete(m.actives, channel.target)
-				m.rwMutex.Unlock()
+				for {
+					b := channel.cli.WaitForStateChange(ctx, channel.cli.GetState())
+					if !b {
+						return
+					}
+					state := channel.cli.GetState()
+					if state != connectivity.Ready {
+						log.Debug("[gRPC]channel state change", zap.Any("state", state))
+						idleChannel := IdleChannel{
+							Channel:  channel,
+							IdleTime: time.Now(),
+						}
+						m.rwMutex.Lock()
+						delete(m.actives, channel.target)
+						m.rwMutex.Unlock()
 
-				m.idleMu.Lock()
-				m.idles[channel.target] = idleChannel
-				m.idleMu.Unlock()
+						m.idleMu.Lock()
+						m.idles[channel.target] = idleChannel
+						m.idleMu.Unlock()
+					} else {
+						m.idleMu.Lock()
+						delete(m.idles, channel.target)
+						m.idleMu.Unlock()
+
+						m.rwMutex.Lock()
+						m.actives[channel.target] = channel
+						m.rwMutex.Unlock()
+					}
+				}
 			}()
 		}
 
