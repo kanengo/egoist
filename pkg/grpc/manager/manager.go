@@ -103,27 +103,49 @@ func (m *Manager) newChannel(ctx context.Context, target string) (*Channel, erro
 						return
 					}
 					state := channel.cli.GetState()
-					if state != connectivity.Ready {
-						log.Debug("[gRPC]channel state change", zap.Any("state", state))
+					log.Debug("[gRPC]channel state change", zap.Any("state", state))
+					if state == connectivity.Idle {
 						idleChannel := IdleChannel{
 							Channel:  channel,
 							IdleTime: time.Now(),
 						}
-						m.rwMutex.Lock()
-						delete(m.actives, channel.target)
-						m.rwMutex.Unlock()
-
 						m.idleMu.Lock()
 						m.idles[channel.target] = idleChannel
 						m.idleMu.Unlock()
-					} else {
-						m.idleMu.Lock()
-						delete(m.idles, channel.target)
-						m.idleMu.Unlock()
-
+					} else if state == connectivity.Ready {
 						m.rwMutex.Lock()
 						m.actives[channel.target] = channel
 						m.rwMutex.Unlock()
+
+						m.idleMu.RLock()
+						_, ok := m.idles[channel.target]
+						m.idleMu.RUnlock()
+
+						if ok {
+							m.idleMu.Lock()
+							delete(m.idles, channel.target)
+							m.idleMu.Unlock()
+						}
+					} else {
+						m.idleMu.RLock()
+						_, ok := m.idles[channel.target]
+						m.idleMu.RUnlock()
+
+						if ok {
+							m.idleMu.Lock()
+							delete(m.idles, channel.target)
+							m.idleMu.Unlock()
+						}
+
+						m.rwMutex.RLock()
+						_, ok = m.actives[channel.target]
+						m.rwMutex.RUnlock()
+
+						if ok {
+							m.rwMutex.Lock()
+							delete(m.actives, channel.target)
+							m.rwMutex.Unlock()
+						}
 					}
 				}
 			}()
