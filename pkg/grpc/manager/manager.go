@@ -45,18 +45,37 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) Init(ctx context.Context) error {
+	m.checkIdleChannels()
 	return nil
 }
 
 func (m *Manager) checkIdleChannels() {
 	go func() {
 		for {
-			//var idleTimeoutTargets []string
+			time.Sleep(5 * time.Minute)
+			var idleTimeoutTargets []string
+			now := time.Now()
 			m.idleMu.RLock()
-			if len(m.idles) == 0 {
-				continue
+			for target, idleChannel := range m.idles {
+				if now.Sub(idleChannel.IdleTime) >= 5*time.Minute {
+					idleTimeoutTargets = append(idleTimeoutTargets, target)
+				}
 			}
 			m.idleMu.RUnlock()
+
+			if len(idleTimeoutTargets) > 0 {
+				deletedChannels := make([]*Channel, 0, len(idleTimeoutTargets))
+				m.rwMutex.Lock()
+				for _, target := range idleTimeoutTargets {
+					c, ok := m.actives[target]
+					if !ok {
+						continue
+					}
+					deletedChannels = append(deletedChannels, c)
+					delete(m.actives, target)
+				}
+				m.rwMutex.Unlock()
+			}
 		}
 
 	}()
@@ -146,6 +165,7 @@ func (m *Manager) newChannel(ctx context.Context, target string) (*Channel, erro
 							delete(m.actives, channel.target)
 							m.rwMutex.Unlock()
 						}
+						break
 					}
 				}
 			}()
