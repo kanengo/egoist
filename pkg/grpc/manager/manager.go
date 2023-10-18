@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kanengo/goutil/pkg/log"
+	"github.com/kanengo/goutil/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
@@ -15,7 +16,7 @@ import (
 
 type Manager struct {
 	actives map[string]*Channel
-	idles   map[string]IdleChannel
+	idles   map[string]idleChannel
 
 	appId string
 
@@ -27,15 +28,28 @@ type Manager struct {
 	maxReadBufferSize  int
 
 	sg singleflight.Group
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	wg sync.WaitGroup
 }
 
-type IdleChannel struct {
+type idleChannel struct {
 	*Channel
 	IdleTime time.Time
 }
 
-func NewManager() *Manager {
-	m := &Manager{}
+func NewManager(ctx context.Context) *Manager {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
+	m := &Manager{
+		ctx:    ctx,
+		cancel: cancel,
+
+		actives: map[string]*Channel{},
+		idles:   map[string]idleChannel{},
+	}
 
 	if m.dialTimeout == 0 {
 		m.dialTimeout = time.Second * 5
@@ -49,10 +63,102 @@ func (m *Manager) Init(ctx context.Context) error {
 	return nil
 }
 
+func (m *Manager) Close() error {
+	m.cancel()
+
+	m.wg.Wait()
+
+	return nil
+}
+
+func (m *Manager) GetChannel(ctx context.Context, target string) (c *Channel, err error) {
+	return m.getActiveChannel(ctx, target)
+}
+
+func (m *Manager) getActiveChannel(ctx context.Context, target string) (c *Channel, err error) {
+	var ok bool
+	m.rwMutex.RLock()
+	c, ok = m.actives[target]
+	m.rwMutex.RUnlock()
+
+	if ok {
+		return c, nil
+	}
+
+	c, err = m.newChannel(ctx, target)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
+func (m *Manager) hasActiveTarget(target string) bool {
+	m.rwMutex.RLock()
+	_, ok := m.actives[target]
+	m.rwMutex.RUnlock()
+
+	return ok
+}
+func (m *Manager) hasIdleTarget(target string) bool {
+	m.idleMu.RLock()
+	_, ok := m.idles[target]
+	m.idleMu.RUnlock()
+
+	return ok
+}
+
+func (m *Manager) addIdleChannel(ic idleChannel) {
+	m.idleMu.Lock()
+	m.idles[ic.Channel.target] = ic
+	m.idleMu.Unlock()
+}
+
+func (m *Manager) delIdleChannel(target string) {
+	if !m.hasIdleTarget(target) {
+		return
+	}
+
+	m.idleMu.Lock()
+	delete(m.idles, target)
+	m.idleMu.Unlock()
+}
+
+func (m *Manager) delActiveChannel(target string) {
+	if !m.hasActiveTarget(target) {
+		return
+	}
+
+	m.rwMutex.Lock()
+	delete(m.actives, target)
+	m.rwMutex.Unlock()
+}
+
+func (m *Manager) addActiveChannel(c *Channel) {
+	if m.hasActiveTarget(c.target) {
+		return
+	}
+	m.rwMutex.Lock()
+	m.actives[c.target] = c
+	m.rwMutex.Unlock()
+}
+
 func (m *Manager) checkIdleChannels() {
+	m.wg.Add(1)
 	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer func() {
+			ticker.Stop()
+			m.wg.Done()
+		}()
 		for {
-			time.Sleep(5 * time.Minute)
+			select {
+			case <-ticker.C:
+			case <-m.ctx.Done():
+				break
+			}
+
 			var idleTimeoutTargets []string
 			now := time.Now()
 			m.idleMu.RLock()
@@ -64,21 +170,76 @@ func (m *Manager) checkIdleChannels() {
 			m.idleMu.RUnlock()
 
 			if len(idleTimeoutTargets) > 0 {
-				deletedChannels := make([]*Channel, 0, len(idleTimeoutTargets))
+				deletedChannels := make(map[string]*Channel, len(idleTimeoutTargets))
 				m.rwMutex.Lock()
 				for _, target := range idleTimeoutTargets {
 					c, ok := m.actives[target]
 					if !ok {
 						continue
 					}
-					deletedChannels = append(deletedChannels, c)
+					deletedChannels[c.target] = c
 					delete(m.actives, target)
 				}
 				m.rwMutex.Unlock()
+
+				m.idleMu.Lock()
+				for _, target := range idleTimeoutTargets {
+					ic, ok := m.idles[target]
+					if !ok {
+						continue
+					}
+
+					if _, ok := deletedChannels[target]; !ok {
+						deletedChannels[target] = ic.Channel
+					}
+					delete(m.idles, target)
+				}
+				m.idleMu.Unlock()
+
+				for _, c := range deletedChannels {
+					_ = c.Close()
+				}
 			}
 		}
-
 	}()
+}
+
+func (m *Manager) checkChannelState(c *Channel) {
+	m.wg.Add(1)
+	go func() {
+		utils.CheckGoPanic(m.ctx, nil)
+		defer func() {
+			_ = c.Close()
+			m.wg.Done()
+		}()
+		for {
+			b := c.cli.WaitForStateChange(m.ctx, c.cli.GetState())
+			if !b {
+				break
+			}
+			state := c.cli.GetState()
+			log.Debug("[gRPC]channel state change", zap.Any("state", state))
+			if state == connectivity.Idle {
+				ic := idleChannel{
+					Channel:  c,
+					IdleTime: time.Now(),
+				}
+				m.addIdleChannel(ic)
+			} else if state == connectivity.Ready {
+				m.addActiveChannel(c)
+
+				m.delIdleChannel(c.target)
+			} else {
+				//
+				m.delActiveChannel(c.target)
+
+				m.delIdleChannel(c.target)
+
+				break
+			}
+		}
+	}()
+
 }
 
 func (m *Manager) newChannel(ctx context.Context, target string) (*Channel, error) {
@@ -115,60 +276,7 @@ func (m *Manager) newChannel(ctx context.Context, target string) (*Channel, erro
 			m.actives[channel.target] = channel
 			m.rwMutex.Unlock()
 
-			go func() {
-				for {
-					b := channel.cli.WaitForStateChange(ctx, channel.cli.GetState())
-					if !b {
-						return
-					}
-					state := channel.cli.GetState()
-					log.Debug("[gRPC]channel state change", zap.Any("state", state))
-					if state == connectivity.Idle {
-						idleChannel := IdleChannel{
-							Channel:  channel,
-							IdleTime: time.Now(),
-						}
-						m.idleMu.Lock()
-						m.idles[channel.target] = idleChannel
-						m.idleMu.Unlock()
-					} else if state == connectivity.Ready {
-						m.rwMutex.Lock()
-						m.actives[channel.target] = channel
-						m.rwMutex.Unlock()
-
-						m.idleMu.RLock()
-						_, ok := m.idles[channel.target]
-						m.idleMu.RUnlock()
-
-						if ok {
-							m.idleMu.Lock()
-							delete(m.idles, channel.target)
-							m.idleMu.Unlock()
-						}
-					} else {
-						m.idleMu.RLock()
-						_, ok := m.idles[channel.target]
-						m.idleMu.RUnlock()
-
-						if ok {
-							m.idleMu.Lock()
-							delete(m.idles, channel.target)
-							m.idleMu.Unlock()
-						}
-
-						m.rwMutex.RLock()
-						_, ok = m.actives[channel.target]
-						m.rwMutex.RUnlock()
-
-						if ok {
-							m.rwMutex.Lock()
-							delete(m.actives, channel.target)
-							m.rwMutex.Unlock()
-						}
-						break
-					}
-				}
-			}()
+			m.checkChannelState(channel)
 		}
 
 		return channel, nil
